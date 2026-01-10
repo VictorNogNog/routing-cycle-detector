@@ -3,12 +3,14 @@
 Build script that bundles src/ modules into a single standalone my_solution.py.
 
 This script:
-1. Reads all .py files from src/ directory
-2. Concatenates them with the required PEP 723 metadata
-3. Outputs my_solution.py as an executable script
+1. Reads all .py files from src/ directory in dependency order
+2. Removes relative imports (not needed in single-file bundle)
+3. Concatenates them with the required PEP 723 metadata
+4. Outputs my_solution.py as an executable script
 """
 
 import os
+import re
 import stat
 from pathlib import Path
 
@@ -16,7 +18,7 @@ from pathlib import Path
 SHEBANG = "#!/usr/bin/env -S uv run --script"
 SCRIPT_METADATA = """\
 # /// script
-# requires-python = ">=3.14"
+# requires-python = ">=3.10+"
 # dependencies = []
 # ///
 """
@@ -26,22 +28,57 @@ PROJECT_ROOT = Path(__file__).parent
 SRC_DIR = PROJECT_ROOT / "src"
 OUTPUT_FILE = PROJECT_ROOT / "my_solution.py"
 
+# Module order: dependencies must come before dependents
+MODULE_ORDER = [
+    "partition.py",   # Base: no dependencies
+    "graph.py",       # Base: no dependencies
+    "scheduler.py",   # Depends on: partition, graph
+    "main.py",        # Depends on: scheduler
+]
+
 
 def collect_source_files() -> list[Path]:
-    """Collect all Python files from src/ directory in sorted order."""
+    """Collect Python files from src/ in dependency order."""
     source_files = []
+
+    # First, add files in specified order
+    for module_name in MODULE_ORDER:
+        module_path = SRC_DIR / module_name
+        if module_path.exists():
+            source_files.append(module_path)
+
+    # Then add any remaining files (except __init__.py)
     for py_file in sorted(SRC_DIR.glob("*.py")):
-        # Skip __init__.py as it's typically just for package marking
         if py_file.name == "__init__.py":
             continue
-        source_files.append(py_file)
+        if py_file not in source_files:
+            source_files.append(py_file)
+
     return source_files
 
 
+def strip_relative_imports(content: str) -> str:
+    """Remove relative import statements (they're not needed in bundled file)."""
+    lines = content.split("\n")
+    filtered_lines = []
+
+    for line in lines:
+        # Skip lines that are relative imports from current package
+        if re.match(r"^\s*from\s+\.\w*\s+import\s+", line):
+            continue
+        filtered_lines.append(line)
+
+    return "\n".join(filtered_lines)
+
+
 def read_file_content(file_path: Path) -> str:
-    """Read and return the content of a Python file, stripping module docstrings."""
+    """Read and process the content of a Python file."""
     with open(file_path, "r", encoding="utf-8") as f:
         content = f.read()
+
+    # Strip relative imports
+    content = strip_relative_imports(content)
+
     return content
 
 
@@ -63,6 +100,7 @@ def build_solution() -> None:
     ]
 
     # Append each source file's content
+    has_main_block = False
     for src_file in source_files:
         content = read_file_content(src_file)
         parts.append(f"# === {src_file.name} ===")
@@ -70,11 +108,16 @@ def build_solution() -> None:
         parts.append("")
         print(f"  Added: {src_file.name}")
 
-    # Add main entry point placeholder
-    parts.append("")
-    parts.append('if __name__ == "__main__":')
-    parts.append("    pass  # TODO: Implement main entry point")
-    parts.append("")
+        # Check if this file has its own __main__ block
+        if 'if __name__ == "__main__":' in content:
+            has_main_block = True
+
+    # Only add main entry point if not already present
+    if not has_main_block:
+        parts.append("")
+        parts.append('if __name__ == "__main__":')
+        parts.append("    main()")
+        parts.append("")
 
     # Write the output file
     output_content = "\n".join(parts)
