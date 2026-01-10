@@ -1,7 +1,6 @@
 """CLI entry point for the Routing Cycle Detector."""
 
 import argparse
-import sys
 
 from .scheduler import main_solve
 

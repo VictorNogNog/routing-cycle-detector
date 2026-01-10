@@ -1,0 +1,4 @@
+Two-pass stream: partition lines into CRC32 buckets by (claim,status) to bound memory. 
+Buckets processed in parallel (threads if free-threaded, else processes), building deduped byte-key adjacency. 
+Use O(n) functional-graph cycle finder when outdegree<=1, else DFS with min-start rule.
+Future: tune bucket count/chunksize, faster I/O, spill oversized groups.

@@ -1,2 +1,410 @@
-# routing-cycle-detector
-CLI tool that streams large routing logs to detect claim/status routing cycles and report the longest cycle.
+# Routing Cycle Detector
+
+A high-performance CLI tool for finding the longest directed cycle in large routing claim datasets. Designed for files with millions of records, it uses a two-pass streaming architecture with on-disk bucketing to minimize memory usage while enabling parallel processing. The tool leverages Python 3.14's free-threading (no-GIL) for efficient multi-threaded execution when available, falling back to multiprocessing when the GIL is enabled.
+
+**Input format:** `Source|Destination|ClaimID|StatusCode` (pipe-delimited, one record per line)
+
+**Output format:** `<claim_id>,<status_code>,<cycle_length>` (single CSV line to stdout)
+
+---
+
+## Quickstart
+
+The solution is a standalone PEP 723 script that can be executed directly:
+
+```bash
+# Direct execution (requires executable permission)
+./my_solution.py data/large_input_v1.txt
+
+# Via Python interpreter
+python3 my_solution.py data/large_input_v1.txt
+
+# Via uv (recommended for dependency management)
+uv run --script my_solution.py data/large_input_v1.txt
+```
+
+**Output behavior:**
+- Exactly one CSV line printed to **stdout**: `<claim_id>,<status_code>,<cycle_length>`
+- Progress and diagnostic messages go to **stderr** (only when `--verbose` is used)
+
+### CLI Options
+
+```bash
+./my_solution.py <input_file> [--buckets N] [--verbose]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--buckets` | 1024 | Number of partition buckets (must be power of 2) |
+| `--verbose` | off | Print progress information to stderr |
+
+---
+
+## How It Works
+
+The algorithm uses a **two-pass streaming strategy** to handle arbitrarily large input files while keeping memory bounded:
+
+### Pass 1: Partitioning
+
+Stream the input file line-by-line in binary mode. For each record, compute a stable hash of `(claim_id, status_code)` using CRC32, then write the raw line bytes to the corresponding bucket file on disk. This ensures all edges belonging to the same `(claim_id, status_code)` graph land in the same bucket.
+
+### Pass 2: Parallel Analysis
+
+Process each non-empty bucket file independently. Within each bucket:
+1. Build adjacency graphs grouped by `(claim_id, status_code)`
+2. Find the longest simple cycle in each graph
+3. Track the local best result
+
+After all buckets complete, reduce results to find the global maximum cycle.
+
+### Why This Architecture?
+
+- **Bounded memory:** Only one bucket's data is in memory at a time per worker
+- **Parallelism:** Buckets are independent; process them concurrently
+- **Streaming I/O:** Never load the entire input file into memory
+- **Cache-friendly:** CRC32 hashing groups related data together
+
+---
+
+## Implementation Details
+
+### Partitioning and LRU File-Handle Cache
+
+Opening thousands of bucket files simultaneously would exhaust file descriptor limits. The partitioner uses an **LRU (Least Recently Used) cache** that keeps at most `MAX_OPEN_HANDLES` (default: 128) file handles open at once. When writing to a bucket:
+
+1. If the handle is cached, use it (and mark as recently used)
+2. If not cached and cache is full, evict the least-recently-used handle (close it)
+3. Open the new handle and add to cache
+
+This allows streaming to any number of buckets while respecting OS limits.
+
+### Bytes-First Parsing
+
+All parsing stays in bytes until the final output to avoid UTF-8 decode overhead on millions of lines:
+
+- Use `line.rstrip(b"\n\r")` instead of `strip()` (faster, targeted)
+- Use `line.split(b"|", 3)` with maxsplit to avoid allocating extra parts
+- Store graph keys as `(claim_bytes, status_bytes)` tuples
+- Only decode the winning result for final CSV output
+
+### Graph Building: Deduplicated Adjacency Sets
+
+For each `(claim_id, status_code)` group, build an adjacency structure:
+
+```python
+adj: dict[bytes, set[bytes]]  # source -> set of destinations
+```
+
+Using **sets** automatically deduplicates edges, which:
+- Preserves the "functional graph" optimization when out-degree is actually ≤1
+- Reduces work in cycle detection
+- Handles duplicate input lines gracefully
+
+While building, track the maximum out-degree to determine which cycle detection algorithm to use.
+
+### Cycle Detection
+
+Two algorithms based on graph structure:
+
+#### Functional Graph Fast Path (O(N))
+
+When `max_out_degree ≤ 1`, each node has at most one outgoing edge. Use a timestamp-based walk:
+
+1. Walk from each unvisited node, recording position in path
+2. If we revisit a node in the current path → cycle found
+3. Cycle length = current position − first visit position
+
+This is O(N) where N is the number of nodes.
+
+#### General DFS with Minimum-Start-Node Rule
+
+For graphs with branching (out-degree > 1), use DFS with backtracking. To avoid counting the same cycle multiple times:
+
+1. Sort all nodes lexicographically
+2. For each start node at index `i`, only explore neighbors with index ≥ `i`
+3. A cycle is found when DFS returns to the start node
+
+This ensures each simple cycle is discovered exactly once (from its lexicographically smallest node).
+
+### Concurrency Model
+
+The executor is selected based on GIL status at runtime:
+
+| GIL Status | Executor | Why |
+|------------|----------|-----|
+| **Disabled** (free-threaded Python 3.14t) | `ThreadPoolExecutor` | True parallelism with shared memory; lower overhead |
+| **Enabled** (standard Python) | `ProcessPoolExecutor` | Bypasses GIL via multiprocessing; higher memory cost |
+
+When using `ProcessPoolExecutor`, we use `executor.map(..., chunksize=16)` to reduce IPC overhead by batching bucket assignments.
+
+### Complexity and Trade-offs
+
+| Component | Time Complexity | Space Complexity |
+|-----------|-----------------|------------------|
+| Partitioning | O(N) where N = input lines | O(bucket_count × buffer_size) |
+| Bucket processing | O(E + V) for functional graphs | O(V + E) per bucket |
+| | O(V! / (V-k)!) worst case for DFS | (bounded by graph size in bucket) |
+
+**Trade-offs and future improvements:**
+- **Bucket count tuning:** More buckets = smaller graphs but more files; fewer = larger graphs
+- **Adaptive partitioning:** Could detect and split oversized groups
+- **Memory-mapped I/O:** Could improve read performance for Pass 2
+- **Faster hashing:** xxHash could replace CRC32 for marginal speedup
+- **Progress metrics:** Add estimated completion time for very long runs
+
+---
+
+## Diagrams
+
+### End-to-End Pipeline
+
+Overview of the complete two-pass architecture from input to output:
+
+```mermaid
+graph TD
+  A[CLI run: python my_solution.py INPUT] --> B[Parse args: buckets and verbose]
+  B --> C[Validate buckets power of two]
+  C --> D{GIL enabled}
+  D -->|yes| E[Use ProcessPoolExecutor]
+  D -->|no| F[Use ThreadPoolExecutor]
+
+  C --> G[Create temp dir routing_cycles]
+  G --> H[Pass 1: partition_to_buckets]
+  H --> I[Pass 2: process_bucket in parallel]
+  I --> J[Reduce: select global best]
+  J --> K[Decode winner and print CSV]
+  K --> L[Cleanup: delete temp dir]
+
+  subgraph PASS1[Pass 1 details]
+    H1[Open input rb and stream lines] --> H2[Rstrip newline and split with max 3]
+    H2 --> H3[Compute bucket index using CRC32]
+    H3 --> H4[Write raw line to bucket file]
+    H4 --> H5[LRU cache limits open file handles]
+    H5 --> H6[Close all bucket handles]
+    H6 --> H7[Return non empty bucket paths]
+  end
+
+  H --> H1
+  H7 --> I
+
+  subgraph EXEC[Executor choice]
+    E --> I
+    F --> I
+  end
+```
+
+### Bucket Analysis Details
+
+Detailed view of how each bucket is processed to build graphs and detect cycles:
+
+```mermaid
+graph TD
+  P[process_bucket for one bucket] --> R[Read bucket file rb line by line]
+  R --> S[Rstrip newline and split with max 3]
+  S --> T[Key is claim bytes and status bytes]
+  T --> U[Adjacency: src maps to set of dst]
+  U --> V[Track max unique out degree per group]
+
+  V --> W[For each group in this bucket]
+  W --> X{Max out degree <= 1}
+  X -->|yes| Y[Use functional graph cycle finder]
+  X -->|no| Z[Use DFS cycle finder]
+
+  Z --> Z1[Sort nodes and assign index]
+  Z1 --> Z2[For each start index i]
+  Z2 --> Z3[DFS only to nodes with index >= i]
+  Z3 --> Z4[Count cycle only when returning to start]
+
+  Y --> AA[Local best cycle length]
+  Z4 --> AA
+  AA --> AB[Return best tuple or none]
+```
+
+### Sequence Diagram
+
+Interaction sequence between components during execution:
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant CLI as main
+  participant SOL as solve
+  participant P1 as partition
+  participant LRU as LRU cache
+  participant EX as Executor
+  participant W as Worker
+  participant OUT as STDOUT
+
+  U->>CLI: run script with input path
+  CLI->>SOL: call solve with buckets and verbose
+  SOL->>SOL: create temp dir
+  SOL->>P1: pass 1 stream input bytes
+
+  loop each input line
+    P1->>P1: rstrip newline, split into 4 fields
+    P1->>P1: compute bucket index via CRC32
+    P1->>LRU: write raw line to bucket file
+    Note over LRU: open on demand, evict least recently used when full
+  end
+
+  P1-->>SOL: return list of non empty bucket paths
+  SOL->>EX: map process_bucket over bucket paths
+
+  par bucket processing
+    EX->>W: process_bucket for one bucket
+    W-->>EX: return best claim,status,length for that bucket
+  end
+
+  EX-->>SOL: stream results back
+  SOL->>SOL: reduce to global best
+  SOL->>OUT: print claim,status,length
+  SOL->>SOL: delete temp dir
+```
+
+---
+
+## Benchmarking
+
+### Methodology
+
+The benchmark script `my_solution_benchmark_gil.py` provides a rigorous comparison between free-threaded and GIL-enforced execution:
+
+- **Alternating trial order:** Odd trials run free-threaded first, even trials run GIL-enforced first. This cancels out "second run wins" effects from OS page cache warming.
+- **Warm-up runs:** Initial runs are discarded to eliminate cold-start bias.
+- **Wall-clock timing:** Uses GNU `/usr/bin/time -v` for accurate elapsed time measurement.
+- **Process-tree memory:** Uses `psutil` to sample RSS across the parent process and ALL child processes (recursively). This is critical because:
+  - `ThreadPoolExecutor` (free-threaded): Single process, parent RSS ≈ total
+  - `ProcessPoolExecutor` (GIL-enforced): Multiple worker processes; parent RSS alone hides 90%+ of actual memory usage
+
+### Running the Benchmark
+
+```bash
+# Basic run with defaults (7 trials, 1 warmup)
+./my_solution_benchmark_gil.py data/large_input_v1.txt
+
+# Custom configuration
+./my_solution_benchmark_gil.py data/large_input_v1.txt \
+    --trials 5 \
+    --warmup 2 \
+    --mem-sample-ms 50
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--trials` | 7 | Number of timed trials per mode |
+| `--warmup` | 1 | Warm-up runs per mode (not counted) |
+| `--mem-sample-ms` | 75 | Memory sampling interval in milliseconds |
+| `--synthetic` | off | Auto-generate input if file missing |
+
+### Results on large_input_v1.txt
+
+```
+================================================================================
+GIL Benchmark: Free-threaded vs GIL-enforced
+================================================================================
+Input: data/large_input_v1.txt
+Trials: 2 | Warm-up runs: 1
+Memory sampling: 75ms interval (process-tree RSS via psutil)
+Python: ...
+Wall-clock timing: GNU time
+
+Warming up (1 run(s) per mode, not counted)...
+  Warm-up complete.
+
+Running 2 trials (alternating order to reduce bias)...
+  Trial 1/2: Free=42.79s/228MiB, GIL=44.97s/958MiB
+  Trial 2/2: Free=43.81s/232MiB, GIL=45.52s/953MiB
+
+================================================================================
+RESULTS
+================================================================================
+Mode            Median(s)   Min(s)    Max(s)    Peak RSS Tree  time-v RSS  Output
+--------------------------------------------------------------------------------
+Free-threaded   43.300      42.790    43.810    230.0          228.8       190211,190310,10
+GIL-enforced    45.245      44.970    45.520    955.6          28.8        190211,190310,10
+--------------------------------------------------------------------------------
+
+Peak RSS Tree = sum of RSS across parent + all child processes (via psutil)
+time-v RSS    = parent process only (from /usr/bin/time -v)
+
+Speedup (GIL-enforced / Free-threaded): 1.04x
+  -> Free-threading is 1.04x faster
+================================================================================
+```
+
+### Key Observations
+
+| Metric | Free-threaded | GIL-enforced | Notes |
+|--------|---------------|--------------|-------|
+| **Median Time** | 43.3s | 45.2s | Free-threading 1.04x faster |
+| **Peak RSS (Tree)** | 230 MiB | 956 MiB | 4x more memory with ProcessPool |
+| **time-v RSS** | 229 MiB | 29 MiB | **Misleading!** Hides worker memory |
+
+The `time-v RSS` metric for GIL-enforced mode shows only 29 MiB because `/usr/bin/time` only measures the parent process. The actual memory usage across all worker processes is **956 MiB**—over 33x higher. This demonstrates why process-tree measurement via `psutil` is essential for accurate benchmarking of multiprocess workloads.
+
+---
+
+## Notes and Troubleshooting
+
+### Bucket Count Must Be Power of Two
+
+The partitioner uses bitwise AND for fast modulo: `bucket_idx = hash & (num_buckets - 1)`. This only works correctly when `num_buckets` is a power of two (e.g., 256, 512, 1024).
+
+### "Too Many Open Files" Error
+
+If you encounter file descriptor exhaustion:
+
+1. **Check current limit:** `ulimit -n`
+2. **Increase limit:** `ulimit -n 4096` (or higher)
+3. **Or reduce cache size:** The `MAX_OPEN_HANDLES` constant in `partition.py` defaults to 128. Lowering it trades some I/O performance for fewer open files.
+
+### WSL / Linux Notes
+
+- **GNU time required:** Ensure `/usr/bin/time` exists (not the shell builtin). Install with:
+  ```bash
+  sudo apt install time
+  ```
+- **psutil required for benchmarking:** The benchmark script needs `psutil` for process-tree memory measurement:
+  ```bash
+  pip install psutil
+  # or with uv:
+  uv pip install psutil
+  ```
+
+### Python Version
+
+This solution requires **Python 3.14+** for free-threading support. It will run on earlier versions but will use `ProcessPoolExecutor` (higher memory overhead).
+
+---
+
+## Project Structure
+
+```
+routing-cycle-detector/
+├── my_solution.py                    # Main standalone solution (PEP 723)
+├── my_solution_benchmark_gil.py      # Benchmark script
+├── generate_synthetic_cycles.py      # Synthetic dataset generator
+├── build.py                          # Bundles src/ into my_solution.py
+├── solution.txt                      # Output from running on challenge data
+├── explanation.txt                   # Brief algorithm summary
+├── src/
+│   ├── partition.py                  # Pass 1: Bucketing with LRU cache
+│   ├── graph.py                      # Pass 2: Cycle detection
+│   ├── scheduler.py                  # Orchestration and parallelism
+│   └── main.py                       # CLI entry point
+├── tests/
+│   ├── test_partition.py
+│   └── test_graph.py
+├── data/
+│   └── large_input_v1.txt            # Challenge dataset
+└── diagrams/
+    ├── End-to-End Pipeline.md
+    ├── Bucket Analysis Details.md
+    └── Sequence Diagram.md
+```
+
+---
+
+## License
+
+MIT
