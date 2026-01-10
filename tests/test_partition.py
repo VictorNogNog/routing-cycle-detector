@@ -41,7 +41,7 @@ class TestPartitionToBuckets:
                 with open(expected_path, "rb") as bf:
                     bucket_lines = bf.readlines()
 
-                clm001_lines = [l for l in bucket_lines if b"CLM001|200" in l]
+                clm001_lines = [line for line in bucket_lines if b"CLM001|200" in line]
                 assert len(clm001_lines) == 2
 
             finally:

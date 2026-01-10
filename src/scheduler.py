@@ -90,7 +90,7 @@ def solve(
 
         # Pass 2: Process buckets in parallel using executor.map
         if verbose:
-            print(f"Pass 2: Processing buckets...", file=sys.stderr)
+            print("Pass 2: Processing buckets...", file=sys.stderr)
 
         # Convert Path objects to strings for pickling (ProcessPoolExecutor)
         bucket_path_strs = [str(p) for p in bucket_paths]
@@ -120,7 +120,7 @@ def solve(
                             print(f"  New best: {claim_id},{status},{result[2]}", file=sys.stderr)
 
         if verbose:
-            print(f"Pass 2: Complete.", file=sys.stderr)
+            print("Pass 2: Complete.", file=sys.stderr)
 
         # Decode bytes to strings for final result
         if best_result is not None:

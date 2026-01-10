@@ -1,7 +1,6 @@
 """Pass 2: Build graphs from bucket data and detect longest cycles."""
 
 from collections import defaultdict
-from pathlib import Path
 
 
 def process_bucket(bucket_path: str) -> tuple[bytes, bytes, int] | None:
