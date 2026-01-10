@@ -1,3 +1,8 @@
+# Ignore everything inside data/
+data/*
+
+# But keep this placeholder
+!data/.gitkeep
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
