@@ -312,6 +312,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
@@ -395,9 +396,11 @@ def solve(
     try:
         # Pass 1: Partition to buckets
         logger.debug("Pass 1: Partitioning to %d buckets...", buckets)
+        t1_start = time.perf_counter()
 
         bucket_paths = partition_to_buckets(input_path, buckets, tmp_dir)
 
+        t1_end = time.perf_counter()
         logger.debug("  Created %d non-empty buckets", len(bucket_paths))
 
         if not bucket_paths:
@@ -405,6 +408,7 @@ def solve(
 
         # Pass 2: Process buckets in parallel using executor.map
         logger.debug("Pass 2: Processing buckets...")
+        t2_start = time.perf_counter()
 
         # Convert Path objects to strings for pickling (ProcessPoolExecutor)
         bucket_path_strs = [str(p) for p in bucket_paths]
@@ -432,7 +436,17 @@ def solve(
                         status = result[1].decode("utf-8")
                         logger.debug("  New best: %s,%s,%d", claim_id, status, result[2])
 
-        logger.debug("Pass 2: Complete.")
+        t2_end = time.perf_counter()
+
+        # Log phase timing summary
+        t1 = t1_end - t1_start
+        t2 = t2_end - t2_start
+        total = t1 + t2
+        if total > 0:
+            logger.debug(
+                "Timing: Pass1=%.2fs (%.0f%%), Pass2=%.2fs (%.0f%%), Total=%.2fs",
+                t1, 100 * t1 / total, t2, 100 * t2 / total, total
+            )
 
         # Decode bytes to strings for final result
         if best_result is not None:
