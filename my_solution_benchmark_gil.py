@@ -321,18 +321,18 @@ def run_two_mode_benchmark(
 ) -> None:
     """Run the standard 2-mode benchmark (Free-threaded vs GIL-enforced)."""
     # Warm-up runs (not counted)
-    print(f"Warming up ({num_warmup} run(s) per mode, not counted)...")
+    logger.info("Warming up (%d run(s) per mode, not counted)...", num_warmup)
     for _ in range(num_warmup):
         run_benchmark(script_path, input_file, env_free, use_timev, mem_sample_ms)
         run_benchmark(script_path, input_file, env_gil, use_timev, mem_sample_ms)
-    print("Warm-up complete.")
-    print()
+    logger.info("Warm-up complete.")
+    logger.info("")
 
     # Timed trials with alternating order
     results_free: list[dict] = []
     results_gil: list[dict] = []
 
-    print(f"Running {num_trials} trials (alternating order to reduce bias)...")
+    logger.info("Running %d trials (alternating order to reduce bias)...", num_trials)
     for trial in range(1, num_trials + 1):
         if trial % 2 == 1:
             # Odd trial: free-threaded first
@@ -345,13 +345,14 @@ def run_two_mode_benchmark(
 
         results_free.append(r1)
         results_gil.append(r2)
-        print(
-            f"  Trial {trial}/{num_trials}: "
-            f"Free={r1['seconds']:.2f}s/{r1['peak_rss_tree_mib']:.0f}MiB, "
-            f"GIL={r2['seconds']:.2f}s/{r2['peak_rss_tree_mib']:.0f}MiB"
+        logger.info(
+            "  Trial %d/%d: Free=%.2fs/%.0fMiB, GIL=%.2fs/%.0fMiB",
+            trial, num_trials,
+            r1['seconds'], r1['peak_rss_tree_mib'],
+            r2['seconds'], r2['peak_rss_tree_mib']
         )
 
-    print()
+    logger.info("")
 
     stats_free = compute_stats(results_free)
     stats_gil = compute_stats(results_gil)
@@ -369,9 +370,9 @@ def run_two_mode_benchmark(
         speedup = float("inf")
 
     # Print results table
-    print("=" * 80)
-    print("RESULTS")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("RESULTS")
+    logger.info("=" * 80)
 
     # Determine if we have time-v RSS data
     has_timev_rss = stats_free["median_rss_timev"] == stats_free["median_rss_timev"]
@@ -384,8 +385,8 @@ def run_two_mode_benchmark(
     if has_timev_rss:
         header += f" {'time-v RSS':<11}"
     header += f" {'Output':<20}"
-    print(header)
-    print("-" * 80)
+    logger.info(header)
+    logger.info("-" * 80)
 
     # Free-threaded row
     row_free = (
@@ -396,7 +397,7 @@ def run_two_mode_benchmark(
     if has_timev_rss:
         row_free += f" {stats_free['median_rss_timev']:<11.1f}"
     row_free += f" {stats_free['output']:<20}"
-    print(row_free)
+    logger.info(row_free)
 
     # GIL-enforced row
     row_gil = (
@@ -407,22 +408,22 @@ def run_two_mode_benchmark(
     if has_timev_rss:
         row_gil += f" {stats_gil['median_rss_timev']:<11.1f}"
     row_gil += f" {stats_gil['output']:<20}"
-    print(row_gil)
+    logger.info(row_gil)
 
-    print("-" * 80)
-    print()
-    print("Peak RSS Tree = sum of RSS across parent + all child processes (via psutil)")
+    logger.info("-" * 80)
+    logger.info("")
+    logger.info("Peak RSS Tree = sum of RSS across parent + all child processes (via psutil)")
     if has_timev_rss:
-        print("time-v RSS    = parent process only (from /usr/bin/time -v)")
-    print()
-    print(f"Speedup (GIL-enforced / Free-threaded): {speedup:.2f}x")
+        logger.info("time-v RSS    = parent process only (from /usr/bin/time -v)")
+    logger.info("")
+    logger.info("Speedup (GIL-enforced / Free-threaded): %.2fx", speedup)
     if speedup > 1:
-        print(f"  -> Free-threading is {speedup:.2f}x faster")
+        logger.info("  -> Free-threading is %.2fx faster", speedup)
     elif speedup < 1:
-        print(f"  -> GIL-enforced is {1/speedup:.2f}x faster")
+        logger.info("  -> GIL-enforced is %.2fx faster", 1/speedup)
     else:
-        print("  -> No difference")
-    print("=" * 80)
+        logger.info("  -> No difference")
+    logger.info("=" * 80)
 
 
 def run_all_modes_benchmark(
@@ -449,20 +450,20 @@ def run_all_modes_benchmark(
         return env
 
     # Warm-up runs (not counted)
-    print(f"Warming up ({num_warmup} run(s) per mode, not counted)...")
+    logger.info("Warming up (%d run(s) per mode, not counted)...", num_warmup)
     for _ in range(num_warmup):
         for cfg in configs:
             run_benchmark(
                 script_path, input_file, make_env(cfg), use_timev, mem_sample_ms, cfg["label"]
             )
-    print("Warm-up complete.")
-    print()
+    logger.info("Warm-up complete.")
+    logger.info("")
 
     # Results storage
     results: dict[str, list[dict]] = {cfg["label"]: [] for cfg in configs}
 
     # Timed trials with rotating order to reduce bias
-    print(f"Running {num_trials} trials (rotating order to reduce bias)...")
+    logger.info("Running %d trials (rotating order to reduce bias)...", num_trials)
     for trial in range(1, num_trials + 1):
         # Rotate order based on trial number
         rotation = (trial - 1) % len(configs)
@@ -481,9 +482,9 @@ def run_all_modes_benchmark(
             f"{cfg['label']}={trial_results[cfg['label']]['seconds']:.1f}s"
             for cfg in configs
         ]
-        print(f"  Trial {trial}/{num_trials}: {', '.join(summary_parts)}")
+        logger.info("  Trial %d/%d: %s", trial, num_trials, ", ".join(summary_parts))
 
-    print()
+    logger.info("")
 
     # Compute stats for each configuration
     all_stats: dict[str, dict] = {}
@@ -498,72 +499,75 @@ def run_all_modes_benchmark(
             logger.warning("  %s: %s", cfg['label'], all_stats[cfg['label']]['output'])
 
     # Print results table
-    print("=" * 95)
-    print("RESULTS (2×2 Matrix: Executor × GIL)")
-    print("=" * 95)
+    logger.info("=" * 95)
+    logger.info("RESULTS (2×2 Matrix: Executor × GIL)")
+    logger.info("=" * 95)
 
     # Header
-    print(
-        f"{'Executor':<12} {'GIL':<8} {'Median(s)':<11} {'Min(s)':<9} {'Max(s)':<9} "
-        f"{'Peak RSS(MiB)':<14} {'Output':<20}"
+    logger.info(
+        "%s %s %s %s %s %s %s",
+        "Executor".ljust(12), "GIL".ljust(8), "Median(s)".ljust(11),
+        "Min(s)".ljust(9), "Max(s)".ljust(9), "Peak RSS(MiB)".ljust(14), "Output".ljust(20)
     )
-    print("-" * 95)
+    logger.info("-" * 95)
 
     # Print rows
     for cfg in configs:
         stats = all_stats[cfg["label"]]
         executor_name = "threads" if cfg["executor"] == "threads" else "processes"
         gil_status = "on" if cfg["gil"] else "off"
-        print(
-            f"{executor_name:<12} {gil_status:<8} {stats['median_time']:<11.3f} "
-            f"{stats['min_time']:<9.3f} {stats['max_time']:<9.3f} "
-            f"{stats['median_rss_tree']:<14.1f} {stats['output']:<20}"
+        logger.info(
+            "%s %s %s %s %s %s %s",
+            executor_name.ljust(12), gil_status.ljust(8),
+            f"{stats['median_time']:.3f}".ljust(11),
+            f"{stats['min_time']:.3f}".ljust(9),
+            f"{stats['max_time']:.3f}".ljust(9),
+            f"{stats['median_rss_tree']:.1f}".ljust(14),
+            stats['output'].ljust(20)
         )
 
-    print("-" * 95)
-    print()
+    logger.info("-" * 95)
+    logger.info("")
 
     # Compute and display speedups
-    print("SPEEDUPS (GIL-on / GIL-off ratio for each executor):")
-    print()
+    logger.info("SPEEDUPS (GIL-on / GIL-off ratio for each executor):")
+    logger.info("")
 
     # Threads speedup
     threads_off = all_stats["threads+GIL-off"]["median_time"]
     threads_on = all_stats["threads+GIL-on"]["median_time"]
     if threads_off > 0:
         threads_speedup = threads_on / threads_off
-        print(f"  Threads:   {threads_speedup:.2f}x", end="")
         if threads_speedup > 1:
-            print(f" (GIL-off is {threads_speedup:.2f}x faster)")
+            logger.info("  Threads:   %.2fx (GIL-off is %.2fx faster)", threads_speedup, threads_speedup)
         elif threads_speedup < 1:
-            print(f" (GIL-on is {1/threads_speedup:.2f}x faster)")
+            logger.info("  Threads:   %.2fx (GIL-on is %.2fx faster)", threads_speedup, 1/threads_speedup)
         else:
-            print(" (no difference)")
+            logger.info("  Threads:   %.2fx (no difference)", threads_speedup)
 
     # Processes speedup
     procs_off = all_stats["procs+GIL-off"]["median_time"]
     procs_on = all_stats["procs+GIL-on"]["median_time"]
     if procs_off > 0:
         procs_speedup = procs_on / procs_off
-        print(f"  Processes: {procs_speedup:.2f}x", end="")
         if procs_speedup > 1:
-            print(f" (GIL-off is {procs_speedup:.2f}x faster)")
+            logger.info("  Processes: %.2fx (GIL-off is %.2fx faster)", procs_speedup, procs_speedup)
         elif procs_speedup < 1:
-            print(f" (GIL-on is {1/procs_speedup:.2f}x faster)")
+            logger.info("  Processes: %.2fx (GIL-on is %.2fx faster)", procs_speedup, 1/procs_speedup)
         else:
-            print(" (no difference)")
+            logger.info("  Processes: %.2fx (no difference)", procs_speedup)
 
-    print()
+    logger.info("")
 
     # Memory comparison
-    print("MEMORY COMPARISON:")
-    print(f"  Threads GIL-off:   {all_stats['threads+GIL-off']['median_rss_tree']:.1f} MiB")
-    print(f"  Threads GIL-on:    {all_stats['threads+GIL-on']['median_rss_tree']:.1f} MiB")
-    print(f"  Processes GIL-off: {all_stats['procs+GIL-off']['median_rss_tree']:.1f} MiB")
-    print(f"  Processes GIL-on:  {all_stats['procs+GIL-on']['median_rss_tree']:.1f} MiB")
+    logger.info("MEMORY COMPARISON:")
+    logger.info("  Threads GIL-off:   %.1f MiB", all_stats['threads+GIL-off']['median_rss_tree'])
+    logger.info("  Threads GIL-on:    %.1f MiB", all_stats['threads+GIL-on']['median_rss_tree'])
+    logger.info("  Processes GIL-off: %.1f MiB", all_stats['procs+GIL-off']['median_rss_tree'])
+    logger.info("  Processes GIL-on:  %.1f MiB", all_stats['procs+GIL-on']['median_rss_tree'])
 
-    print()
-    print("=" * 95)
+    logger.info("")
+    logger.info("=" * 95)
 
 
 def main() -> None:
@@ -618,22 +622,18 @@ def main() -> None:
         help="Run full 2×2 matrix: (threads, processes) × (GIL-off, GIL-on)",
     )
     parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose logging (DEBUG level)",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging (same as --verbose)",
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Logging level (default: INFO)",
     )
     args = parser.parse_args()
 
-    # Configure logging
-    log_level = logging.DEBUG if (args.verbose or args.debug) else logging.WARNING
+    # Configure logging (benchmark script uses INFO by default for progress/results)
+    log_level = getattr(logging, args.log_level)
     logging.basicConfig(
         level=log_level,
-        format="%(levelname)s: %(message)s",
+        format="%(message)s",
         stream=sys.stderr,
     )
 
@@ -668,24 +668,24 @@ def main() -> None:
     use_timev = check_timev_available()
 
     # Print header
-    print("=" * 95)
+    logger.info("=" * 95)
     if all_modes:
-        print("GIL Benchmark: Full 2×2 Matrix (Executor × GIL)")
+        logger.info("GIL Benchmark: Full 2×2 Matrix (Executor × GIL)")
     else:
-        print("GIL Benchmark: Free-threaded vs GIL-enforced")
-    print("=" * 95)
-    print(f"Input: {input_file}")
-    print(f"Trials: {num_trials} | Warm-up runs: {num_warmup}")
+        logger.info("GIL Benchmark: Free-threaded vs GIL-enforced")
+    logger.info("=" * 95)
+    logger.info("Input: %s", input_file)
+    logger.info("Trials: %d | Warm-up runs: %d", num_trials, num_warmup)
     if all_modes:
-        print("Mode: All combinations (threads×GIL-off, threads×GIL-on, procs×GIL-off, procs×GIL-on)")
+        logger.info("Mode: All combinations (threads×GIL-off, threads×GIL-on, procs×GIL-off, procs×GIL-on)")
     elif executor_policy == "auto":
-        print("Executor: auto (threads if GIL disabled, processes if GIL enabled)")
+        logger.info("Executor: auto (threads if GIL disabled, processes if GIL enabled)")
     else:
-        print(f"Executor: {executor_policy} (forced via RC_EXECUTOR)")
-    print(f"Memory sampling: {mem_sample_ms}ms interval (process-tree RSS via psutil)")
-    print(f"Python: {sys.executable}")
-    print(f"Wall-clock timing: {'GNU time' if use_timev else 'time.perf_counter()'}")
-    print()
+        logger.info("Executor: %s (forced via RC_EXECUTOR)", executor_policy)
+    logger.info("Memory sampling: %dms interval (process-tree RSS via psutil)", mem_sample_ms)
+    logger.info("Python: %s", sys.executable)
+    logger.info("Wall-clock timing: %s", "GNU time" if use_timev else "time.perf_counter()")
+    logger.info("")
 
     if all_modes:
         # Run full 2×2 matrix

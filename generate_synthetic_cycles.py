@@ -186,21 +186,16 @@ Examples:
         help="Random seed for reproducibility (default: 1)",
     )
     parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Enable verbose logging (DEBUG level)",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging (same as --verbose)",
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="WARNING",
+        help="Logging level (default: WARNING)",
     )
 
     args = parser.parse_args()
 
     # Configure logging
-    log_level = logging.DEBUG if (args.verbose or args.debug) else logging.WARNING
+    log_level = getattr(logging, args.log_level)
     logging.basicConfig(
         level=log_level,
         format="%(levelname)s: %(message)s",

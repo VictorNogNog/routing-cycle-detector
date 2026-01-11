@@ -501,15 +501,10 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose logging (DEBUG level)",
-    )
-
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging (same as --verbose)",
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="WARNING",
+        help="Logging level (default: WARNING)",
     )
 
     return parser
@@ -520,8 +515,8 @@ def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
 
-    # Configure logging based on verbosity
-    log_level = logging.DEBUG if (args.verbose or args.debug) else logging.WARNING
+    # Configure logging based on --log-level
+    log_level = getattr(logging, args.log_level)
     configure_logging(log_level)
 
     # Validate buckets is power of 2
