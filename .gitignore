@@ -1,6 +1,6 @@
 # Ignore everything inside data/
 data/*
-
+.cursor/
 # But keep this placeholder
 !data/.gitkeep
 # Byte-compiled / optimized / DLL files
