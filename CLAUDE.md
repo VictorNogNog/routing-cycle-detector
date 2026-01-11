@@ -1,4 +1,5 @@
 # CLAUDE.md - Project Guidelines & Operating Manual
+**CRITICAL:** If you are about to run any git command that writes history (`commit`, `merge`, `rebase`, `reset`, `push`), you MUST first confirm the current branch is `feature/*`.
 
 ## 1. Project Overview
 **Goal:** Create a "Routing Cycle Detector" CLI tool to find the longest cycle in a large, newline-delimited dataset of claims.
@@ -31,7 +32,6 @@
 - **Verification:** - Use `pytest` for logic verification.
   - Run `ruff check .` before committing.
 - **Pull Requests:** Raise PRs via GitHub MCP upon feature completion.
-- **Diagrams:** Generate Mermaid diagrams only at the project completion phase.
 
 ## 5. Coding Standards & Implementation Details
 ### Standalone Script Requirements (PEP 723)

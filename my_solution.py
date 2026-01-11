@@ -39,16 +39,13 @@ class LRUFileCache:
     def write(self, bucket_idx: int, data: bytes) -> None:
         """Write data to the specified bucket, opening handle if needed."""
         if bucket_idx in self._cache:
-            # Move to end (most recently used)
             self._cache.move_to_end(bucket_idx)
             handle = self._cache[bucket_idx]
         else:
-            # Evict LRU if at capacity
             while len(self._cache) >= self._max_handles:
                 _, old_handle = self._cache.popitem(last=False)
                 old_handle.close()
 
-            # Open new handle
             handle = open(self._get_path(bucket_idx), "ab", buffering=BUFFER_SIZE)
             self._cache[bucket_idx] = handle
 
@@ -92,7 +89,6 @@ def partition_to_buckets(
                 if not line:
                     continue
 
-                # Parse with maxsplit=3 for speed
                 parts = line.split(b"|", 3)
                 if len(parts) < 4:
                     continue

@@ -18,9 +18,6 @@ The solution is a standalone PEP 723 script that can be executed directly:
 
 # Via Python interpreter
 python3 my_solution.py data/large_input_v1.txt
-
-# Via uv (recommended for dependency management)
-uv run --script my_solution.py data/large_input_v1.txt
 ```
 
 **Output behavior:**
@@ -30,13 +27,13 @@ uv run --script my_solution.py data/large_input_v1.txt
 ### CLI Options
 
 ```bash
-./my_solution.py <input_file> [--buckets N] [--verbose]
+./my_solution.py <input_file> [--buckets N] [--log-level {DEBUG,INFO,WARNING,ERROR}]
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--buckets` | 1024 | Number of partition buckets (must be power of 2) |
-| `--verbose` | off | Print progress information to stderr |
+| `--log-level` | WARNING | Choices: DEBUG, INFO, WARNING, ERROR |
 
 ---
 
@@ -70,13 +67,7 @@ After all buckets complete, reduce results to find the global maximum cycle.
 
 ### Partitioning and LRU File-Handle Cache
 
-Opening thousands of bucket files simultaneously would exhaust file descriptor limits. The partitioner uses an **LRU (Least Recently Used) cache** that keeps at most `MAX_OPEN_HANDLES` (default: 128) file handles open at once. When writing to a bucket:
-
-1. If the handle is cached, use it (and mark as recently used)
-2. If not cached and cache is full, evict the least-recently-used handle (close it)
-3. Open the new handle and add to cache
-
-This allows streaming to any number of buckets while respecting OS limits.
+The partitioner uses an **LRU (Least Recently Used) cache** that keeps at most `MAX_OPEN_HANDLES` (default: 128) file handles open at once.This allows streaming to any number of buckets while respecting OS limits.
 
 ### Bytes-First Parsing
 
@@ -161,103 +152,34 @@ When using `ProcessPoolExecutor`, we use `executor.map(..., chunksize=16)` to re
 Overview of the complete two-pass architecture from input to output:
 
 ```mermaid
-graph TD
-  A[CLI run: python my_solution.py INPUT] --> B[Parse args: buckets and verbose]
-  B --> C[Validate buckets power of two]
-  C --> D{GIL enabled}
-  D -->|yes| E[Use ProcessPoolExecutor]
-  D -->|no| F[Use ThreadPoolExecutor]
+flowchart TD
+    %% High contrast styling
+    classDef storage fill:#ffffff,stroke:#000000,stroke-width:2px,color:#000000;
+    classDef process fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000000;
+    classDef decision fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#000000;
 
-  C --> G[Create temp dir routing_cycles]
-  G --> H[Pass 1: partition_to_buckets]
-  H --> I[Pass 2: process_bucket in parallel]
-  I --> J[Reduce: select global best]
-  J --> K[Decode winner and print CSV]
-  K --> L[Cleanup: delete temp dir]
+    subgraph Phase1 ["Phase 1: Sequential Partitioning"]
+        Input["Input File"]:::storage --> ParseAndHash["Extract & Hash ClaimID + Status"]:::process
+        ParseAndHash --> BucketIndex["Determine Bucket Index"]:::process
+        BucketIndex --> DiskBuckets["Write to Disk bucket_0000.bin ..."]:::storage
+    end
 
-  subgraph PASS1[Pass 1 details]
-    H1[Open input rb and stream lines] --> H2[Rstrip newline and split with max 3]
-    H2 --> H3[Compute bucket index using CRC32]
-    H3 --> H4[Write raw line to bucket file]
-    H4 --> H5[LRU cache limits open file handles]
-    H5 --> H6[Close all bucket handles]
-    H6 --> H7[Return non empty bucket paths]
-  end
+    subgraph Phase2 ["Phase 2: Parallel Analysis"]
+        DiskBuckets --> Scheduler{"Scheduler Process/Thread Pool"}:::decision
+        
+        subgraph WorkerLogic ["Per-Bucket Processing"]
+            Scheduler -->|Map Bucket Paths| BuildGraph["Build Adjacency List Group by ClaimID + Status"]:::process
+            BuildGraph --> CheckType{"Is Functional Graph? Max Out-Degree <= 1"}:::decision
+            
+            CheckType -- Yes --> AlgoFunctional["Algorithm A: Linear Walk O N Traversal with Path Tracking"]:::process
+            CheckType -- No --> AlgoDFS["Algorithm B: DFS Backtracking Sort Nodes and Skip Lower Indices"]:::process
+            
+            AlgoFunctional --> LocalMax["Identify Longest Cycle in Bucket"]:::process
+            AlgoDFS --> LocalMax
+        end
+    end
 
-  H --> H1
-  H7 --> I
-
-  subgraph EXEC[Executor choice]
-    E --> I
-    F --> I
-  end
-```
-
-### Bucket Analysis Details
-
-Detailed view of how each bucket is processed to build graphs and detect cycles:
-
-```mermaid
-graph TD
-  P[process_bucket for one bucket] --> R[Read bucket file rb line by line]
-  R --> T[Key is claim bytes and status bytes]
-  T --> U[Adjacency: src maps to set of dst]
-  U --> V[Track max unique out degree per group]
-
-  V --> W[For each group in this bucket]
-  W --> X{Max out degree <= 1}
-  X -->|yes| Y[Use functional graph cycle finder]
-  X -->|no| Z[Use DFS cycle finder]
-
-  Z --> Z1[Sort nodes and assign index]
-  Z1 --> Z2[For each start index i]
-  Z2 --> Z3[DFS only to nodes with index >= i]
-  Z3 --> Z4[Count cycle only when returning to start]
-
-  Y --> AA[Local best cycle length]
-  Z4 --> AA
-  AA --> AB[Return best tuple or none]
-```
-
-### Sequence Diagram
-
-Interaction sequence between components during execution:
-
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant CLI as main
-  participant SOL as solve
-  participant P1 as partition
-  participant LRU as LRU cache
-  participant EX as Executor
-  participant W as Worker
-  participant OUT as STDOUT
-
-  U->>CLI: run script with input path
-  CLI->>SOL: call solve with buckets and verbose
-  SOL->>SOL: create temp dir
-  SOL->>P1: pass 1 stream input bytes
-
-  loop each input line
-    P1->>P1: rstrip newline, split into 4 fields
-    P1->>P1: compute bucket index via CRC32
-    P1->>LRU: write raw line to bucket file
-    Note over LRU: open on demand, evict least recently used when full
-  end
-
-  P1-->>SOL: return list of non empty bucket paths
-  SOL->>EX: map process_bucket over bucket paths
-
-  par bucket processing
-    EX->>W: process_bucket for one bucket
-    W-->>EX: return best claim,status,length for that bucket
-  end
-
-  EX-->>SOL: stream results back
-  SOL->>SOL: reduce to global best
-  SOL->>OUT: print claim,status,length
-  SOL->>SOL: delete temp dir
+    LocalMax --> Output["Reduce & output Global Max ClaimID, Status, Length"]:::storage
 ```
 
 ---
@@ -503,12 +425,7 @@ routing-cycle-detector/
 │   └── large_input_v1.txt            # Challenge dataset
 └── diagrams/
     ├── End-to-End Pipeline.md
-    ├── Bucket Analysis Details.md
     └── Sequence Diagram.md
 ```
 
 ---
-
-## License
-
-MIT

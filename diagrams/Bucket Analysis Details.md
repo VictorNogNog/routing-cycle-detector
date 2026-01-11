@@ -1,22 +1,31 @@
 ```mermaid
-graph TD
-  P[process_bucket for one bucket] --> R[Read bucket file rb line by line]
-  R --> S[Rstrip newline and split with max 3]
-  S --> T[Key is claim bytes and status bytes]
-  T --> U[Adjacency: src maps to set of dst]
-  U --> V[Track max unique out degree per group]
+flowchart TD
+    %% High contrast styling
+    classDef storage fill:#ffffff,stroke:#000000,stroke-width:2px,color:#000000;
+    classDef process fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000000;
+    classDef decision fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#000000;
 
-  V --> W[For each group in this bucket]
-  W --> X{Max out degree <= 1}
-  X -->|yes| Y[Use functional graph cycle finder]
-  X -->|no| Z[Use DFS cycle finder]
+    subgraph Phase1 ["Phase 1: Sequential Partitioning"]
+        Input["Input File"]:::storage --> ParseAndHash["Extract & Hash ClaimID + Status"]:::process
+        ParseAndHash --> BucketIndex["Determine Bucket Index"]:::process
+        BucketIndex --> DiskBuckets["Write to Disk bucket_0000.bin ..."]:::storage
+    end
 
-  Z --> Z1[Sort nodes and assign index]
-  Z1 --> Z2[For each start index i]
-  Z2 --> Z3[DFS only to nodes with index >= i]
-  Z3 --> Z4[Count cycle only when returning to start]
+    subgraph Phase2 ["Phase 2: Parallel Analysis"]
+        DiskBuckets --> Scheduler{"Scheduler Process/Thread Pool"}:::decision
+        Scheduler -->|Map Bucket Paths| Worker["Worker Function"]:::process
+        
+        subgraph WorkerLogic ["Per-Bucket Processing"]
+            Worker --> BuildGraph["Build Adjacency List Group by ClaimID + Status"]:::process
+            BuildGraph --> CheckType{"Is Functional Graph? Max Out-Degree <= 1"}:::decision
+            
+            CheckType -- Yes --> AlgoFunctional["Algorithm A: Linear Walk O N Traversal with Path Tracking"]:::process
+            CheckType -- No --> AlgoDFS["Algorithm B: DFS Backtracking Sort Nodes and Skip Lower Indices"]:::process
+            
+            AlgoFunctional --> LocalMax["Identify Longest Cycle in Bucket"]:::process
+            AlgoDFS --> LocalMax
+        end
+    end
 
-  Y --> AA[Local best cycle length]
-  Z4 --> AA
-  AA --> AB[Return best tuple or none]
+    LocalMax --> Output["Reduce & output Global Max ClaimID, Status, Length"]:::storage
 ```
