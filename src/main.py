@@ -1,8 +1,17 @@
-"""CLI entry point for the Routing Cycle Detector."""
-
 import argparse
+import logging
+import sys
 
 from .scheduler import main_solve
+
+
+def configure_logging(level: int = logging.WARNING) -> None:
+    """Configure logging to write to stderr."""
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -27,7 +36,13 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--verbose", "-v",
         action="store_true",
-        help="Print progress information to stderr",
+        help="Enable verbose logging (DEBUG level)",
+    )
+
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (same as --verbose)",
     )
 
     return parser
@@ -38,6 +53,10 @@ def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
 
+    # Configure logging based on verbosity
+    log_level = logging.DEBUG if (args.verbose or args.debug) else logging.WARNING
+    configure_logging(log_level)
+
     # Validate buckets is power of 2
     if args.buckets & (args.buckets - 1) != 0:
         parser.error(f"--buckets must be a power of 2, got {args.buckets}")
@@ -45,7 +64,6 @@ def main() -> None:
     main_solve(
         input_path=args.input_file,
         buckets=args.buckets,
-        verbose=args.verbose,
     )
 
 

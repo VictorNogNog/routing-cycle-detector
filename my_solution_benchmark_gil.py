@@ -18,6 +18,7 @@ which is essential for accurate measurement when ProcessPoolExecutor is used.
 """
 
 import argparse
+import logging
 import os
 import re
 import shutil
@@ -31,13 +32,12 @@ from statistics import median
 try:
     import psutil
 except ImportError:
-    print(
-        "ERROR: psutil is required for process-tree memory benchmarking.",
-        file=sys.stderr,
-    )
-    print("Install with: pip install psutil", file=sys.stderr)
-    print("Or if using uv: uv pip install psutil", file=sys.stderr)
+    sys.stderr.write("ERROR: psutil is required for process-tree memory benchmarking.\n")
+    sys.stderr.write("Install with: pip install psutil\n")
+    sys.stderr.write("Or if using uv: uv pip install psutil\n")
     sys.exit(1)
+
+logger = logging.getLogger(__name__)
 
 
 def parse_elapsed_to_seconds(elapsed_str: str) -> float:
@@ -229,8 +229,8 @@ def run_benchmark(
     elapsed_perf = time.perf_counter() - start_time
 
     if proc.returncode != 0:
-        print(f"Error running benchmark ({mode_label}):", file=sys.stderr)
-        print(stderr, file=sys.stderr)
+        logger.error("Error running benchmark (%s):", mode_label)
+        logger.error("%s", stderr)
         sys.exit(1)
 
     output = stdout.strip()
@@ -269,15 +269,15 @@ def generate_synthetic_if_needed(
 ) -> None:
     """Generate synthetic dataset if it doesn't exist."""
     if Path(output_path).exists():
-        print(f"Synthetic file already exists: {output_path}", file=sys.stderr)
+        logger.info("Synthetic file already exists: %s", output_path)
         return
 
     generator_path = Path(__file__).parent / "generate_synthetic_cycles.py"
     if not generator_path.exists():
-        print(f"Error: Generator script not found: {generator_path}", file=sys.stderr)
+        logger.error("Generator script not found: %s", generator_path)
         sys.exit(1)
 
-    print(f"Generating synthetic dataset: {output_path}", file=sys.stderr)
+    logger.info("Generating synthetic dataset: %s", output_path)
     cmd = [
         sys.executable,
         str(generator_path),
@@ -288,9 +288,8 @@ def generate_synthetic_if_needed(
     ]
     result = subprocess.run(cmd)
     if result.returncode != 0:
-        print("Error: Failed to generate synthetic dataset", file=sys.stderr)
+        logger.error("Failed to generate synthetic dataset")
         sys.exit(1)
-    print(file=sys.stderr)
 
 
 def compute_stats(results: list[dict]) -> dict:
@@ -326,7 +325,7 @@ def run_two_mode_benchmark(
     for _ in range(num_warmup):
         run_benchmark(script_path, input_file, env_free, use_timev, mem_sample_ms)
         run_benchmark(script_path, input_file, env_gil, use_timev, mem_sample_ms)
-    print("  Warm-up complete.")
+    print("Warm-up complete.")
     print()
 
     # Timed trials with alternating order
@@ -359,10 +358,9 @@ def run_two_mode_benchmark(
 
     # Verify outputs match
     if stats_free["output"] != stats_gil["output"]:
-        print("WARNING: Outputs differ between modes!", file=sys.stderr)
-        print(f"  Free-threaded: {stats_free['output']}", file=sys.stderr)
-        print(f"  GIL-enforced:  {stats_gil['output']}", file=sys.stderr)
-        print()
+        logger.warning("Outputs differ between modes!")
+        logger.warning("  Free-threaded: %s", stats_free['output'])
+        logger.warning("  GIL-enforced:  %s", stats_gil['output'])
 
     # Calculate speedup
     if stats_free["median_time"] > 0:
@@ -457,7 +455,7 @@ def run_all_modes_benchmark(
             run_benchmark(
                 script_path, input_file, make_env(cfg), use_timev, mem_sample_ms, cfg["label"]
             )
-    print("  Warm-up complete.")
+    print("Warm-up complete.")
     print()
 
     # Results storage
@@ -495,10 +493,9 @@ def run_all_modes_benchmark(
     # Verify all outputs match
     outputs = [all_stats[cfg["label"]]["output"] for cfg in configs]
     if len(set(outputs)) > 1:
-        print("WARNING: Outputs differ between modes!", file=sys.stderr)
+        logger.warning("Outputs differ between modes!")
         for cfg in configs:
-            print(f"  {cfg['label']}: {all_stats[cfg['label']]['output']}", file=sys.stderr)
-        print()
+            logger.warning("  %s: %s", cfg['label'], all_stats[cfg['label']]['output'])
 
     # Print results table
     print("=" * 95)
@@ -620,7 +617,25 @@ def main() -> None:
         action="store_true",
         help="Run full 2×2 matrix: (threads, processes) × (GIL-off, GIL-on)",
     )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose logging (DEBUG level)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (same as --verbose)",
+    )
     args = parser.parse_args()
+
+    # Configure logging
+    log_level = logging.DEBUG if (args.verbose or args.debug) else logging.WARNING
+    logging.basicConfig(
+        level=log_level,
+        format="%(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
 
     input_file = args.input_file
     num_trials = args.trials
@@ -639,14 +654,14 @@ def main() -> None:
         )
 
     if not Path(input_file).exists():
-        print(f"Error: Input file not found: {input_file}", file=sys.stderr)
+        logger.error("Input file not found: %s", input_file)
         if not args.synthetic:
-            print("  Hint: Use --synthetic to auto-generate test data", file=sys.stderr)
+            logger.error("  Hint: Use --synthetic to auto-generate test data")
         sys.exit(1)
 
     script_path = Path(__file__).parent / "my_solution.py"
     if not script_path.exists():
-        print(f"Error: Solution script not found: {script_path}", file=sys.stderr)
+        logger.error("Solution script not found: %s", script_path)
         sys.exit(1)
 
     # Check for /usr/bin/time

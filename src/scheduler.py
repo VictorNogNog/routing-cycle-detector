@@ -1,20 +1,20 @@
-"""Orchestration: Coordinate partitioning and parallel cycle detection."""
-
+import logging
 import os
+import shutil
 import sys
 import tempfile
-import shutil
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
-from .partition import partition_to_buckets
 from .graph import process_bucket
+from .partition import partition_to_buckets
 
-# Chunksize for ProcessPoolExecutor.map to reduce IPC overhead
+logger = logging.getLogger(__name__)
+
+# Each process recieves 16 buckets to process
 PROCESS_POOL_CHUNKSIZE = 16
 
 # Environment variable to override executor selection
-# Values: "threads", "processes", "auto" (or unset)
 RC_EXECUTOR_ENV = "RC_EXECUTOR"
 
 
@@ -41,7 +41,6 @@ def _get_executor_class():
     elif executor_override == "processes":
         return ProcessPoolExecutor
     else:
-        # Auto-select based on GIL status
         if _is_gil_enabled():
             return ProcessPoolExecutor
         else:
@@ -52,7 +51,6 @@ def solve(
     input_path: str,
     buckets: int = 1024,
     workers: int | None = None,
-    verbose: bool = False,
 ) -> tuple[str, str, int] | None:
     """
     Find the longest cycle in the routing data.
@@ -66,7 +64,6 @@ def solve(
         input_path: Path to the input file.
         buckets: Number of buckets for partitioning (power of 2).
         workers: Number of parallel workers (None = auto).
-        verbose: Print progress information to stderr.
 
     Returns:
         Tuple of (claim_id, status_code, cycle_length) or None if no cycles.
@@ -81,30 +78,26 @@ def solve(
     ExecutorClass = _get_executor_class()
     use_process_pool = ExecutorClass is ProcessPoolExecutor
 
-    if verbose:
-        gil_status = "enabled" if _is_gil_enabled() else "disabled"
-        print(f"GIL status: {gil_status}", file=sys.stderr)
-        print(f"Using executor: {ExecutorClass.__name__}", file=sys.stderr)
+    gil_status = "enabled" if _is_gil_enabled() else "disabled"
+    logger.debug("GIL status: %s", gil_status)
+    logger.debug("Using executor: %s", ExecutorClass.__name__)
 
     # Create temporary directory for buckets
     tmp_dir = tempfile.mkdtemp(prefix="routing_cycles_")
 
     try:
         # Pass 1: Partition to buckets
-        if verbose:
-            print(f"Pass 1: Partitioning to {buckets} buckets...", file=sys.stderr)
+        logger.debug("Pass 1: Partitioning to %d buckets...", buckets)
 
         bucket_paths = partition_to_buckets(input_path, buckets, tmp_dir)
 
-        if verbose:
-            print(f"  Created {len(bucket_paths)} non-empty buckets", file=sys.stderr)
+        logger.debug("  Created %d non-empty buckets", len(bucket_paths))
 
         if not bucket_paths:
             return None
 
         # Pass 2: Process buckets in parallel using executor.map
-        if verbose:
-            print("Pass 2: Processing buckets...", file=sys.stderr)
+        logger.debug("Pass 2: Processing buckets...")
 
         # Convert Path objects to strings for pickling (ProcessPoolExecutor)
         bucket_path_strs = [str(p) for p in bucket_paths]
@@ -128,13 +121,11 @@ def solve(
                 if result is not None:
                     if best_result is None or result[2] > best_result[2]:
                         best_result = result
-                        if verbose:
-                            claim_id = result[0].decode("utf-8")
-                            status = result[1].decode("utf-8")
-                            print(f"  New best: {claim_id},{status},{result[2]}", file=sys.stderr)
+                        claim_id = result[0].decode("utf-8")
+                        status = result[1].decode("utf-8")
+                        logger.debug("  New best: %s,%s,%d", claim_id, status, result[2])
 
-        if verbose:
-            print("Pass 2: Complete.", file=sys.stderr)
+        logger.debug("Pass 2: Complete.")
 
         # Decode bytes to strings for final result
         if best_result is not None:
@@ -150,16 +141,15 @@ def solve(
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def main_solve(input_path: str, buckets: int = 1024, verbose: bool = False) -> None:
+def main_solve(input_path: str, buckets: int = 1024) -> None:
     """
     Main entry point that prints result to stdout.
 
     Args:
         input_path: Path to the input file.
         buckets: Number of buckets for partitioning.
-        verbose: Print progress information to stderr.
     """
-    result = solve(input_path, buckets=buckets, verbose=verbose)
+    result = solve(input_path, buckets=buckets)
 
     if result:
         claim_id, status_code, cycle_length = result
