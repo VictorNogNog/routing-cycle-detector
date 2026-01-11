@@ -1,0 +1,67 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Solution: DEBUG mode",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.main",
+            "args": ["data/large_input_v1.txt", "--log-level", "DEBUG"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Solution: Default (WARNING)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.main",
+            "args": ["data/large_input_v1.txt"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Solution: Synthetic data",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.main",
+            "args": ["data/synth_fast_3p5m.txt", "--log-level", "DEBUG"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Benchmark: Quick test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/my_solution_benchmark_gil.py",
+            "args": ["data/synth_fast_3p5m.txt", "--trials", "2"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Benchmark: All modes",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/my_solution_benchmark_gil.py",
+            "args": ["data/synth_fast_3p5m.txt", "--all-modes", "--trials", "2"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Generate synthetic data",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/generate_synthetic_cycles.py",
+            "args": ["--out", "data/test_synthetic.txt", "--groups", "1000", "--log-level", "INFO"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Current file",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}

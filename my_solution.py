@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.14"
+# requires-python = ">=3.10"
 # dependencies = []
 # ///
 
@@ -9,8 +9,6 @@
 # Edit source files in src/ and run build.py to regenerate
 
 # === partition.py ===
-"""Pass 1: Partition input data into buckets by (claim_id, status_code) hash."""
-
 import zlib
 from collections import OrderedDict
 from pathlib import Path
@@ -41,16 +39,13 @@ class LRUFileCache:
     def write(self, bucket_idx: int, data: bytes) -> None:
         """Write data to the specified bucket, opening handle if needed."""
         if bucket_idx in self._cache:
-            # Move to end (most recently used)
             self._cache.move_to_end(bucket_idx)
             handle = self._cache[bucket_idx]
         else:
-            # Evict LRU if at capacity
             while len(self._cache) >= self._max_handles:
                 _, old_handle = self._cache.popitem(last=False)
                 old_handle.close()
 
-            # Open new handle
             handle = open(self._get_path(bucket_idx), "ab", buffering=BUFFER_SIZE)
             self._cache[bucket_idx] = handle
 
@@ -94,7 +89,6 @@ def partition_to_buckets(
                 if not line:
                     continue
 
-                # Parse with maxsplit=3 for speed
                 parts = line.split(b"|", 3)
                 if len(parts) < 4:
                     continue
@@ -122,8 +116,6 @@ def partition_to_buckets(
 
 
 # === graph.py ===
-"""Pass 2: Build graphs from bucket data and detect longest cycles."""
-
 from collections import defaultdict
 
 
@@ -311,17 +303,23 @@ def _find_cycle_dfs(adj: dict[bytes, set[bytes]]) -> int:
 
 
 # === scheduler.py ===
-"""Orchestration: Coordinate partitioning and parallel cycle detection."""
-
+import logging
+import os
+import shutil
 import sys
 import tempfile
-import shutil
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+import time
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
 
-# Chunksize for ProcessPoolExecutor.map to reduce IPC overhead
+logger = logging.getLogger(__name__)
+
+# Each process recieves 16 buckets to process
 PROCESS_POOL_CHUNKSIZE = 16
+
+# Environment variable to override executor selection
+RC_EXECUTOR_ENV = "RC_EXECUTOR"
 
 
 def _is_gil_enabled() -> bool:
@@ -334,22 +332,29 @@ def _is_gil_enabled() -> bool:
 
 def _get_executor_class():
     """
-    Select the appropriate executor based on GIL status.
+    Select the appropriate executor.
 
-    If GIL is disabled (free-threading), use ThreadPoolExecutor.
-    If GIL is enabled, fall back to ProcessPoolExecutor.
+    Priority:
+    1. RC_EXECUTOR env var override ("threads" or "processes")
+    2. Auto-select based on GIL status (disabled -> threads, enabled -> processes)
     """
-    if _is_gil_enabled():
+    executor_override = os.environ.get(RC_EXECUTOR_ENV, "").lower()
+
+    if executor_override == "threads":
+        return ThreadPoolExecutor
+    elif executor_override == "processes":
         return ProcessPoolExecutor
     else:
-        return ThreadPoolExecutor
+        if _is_gil_enabled():
+            return ProcessPoolExecutor
+        else:
+            return ThreadPoolExecutor
 
 
 def solve(
     input_path: str,
     buckets: int = 1024,
     workers: int | None = None,
-    verbose: bool = False,
 ) -> tuple[str, str, int] | None:
     """
     Find the longest cycle in the routing data.
@@ -363,7 +368,6 @@ def solve(
         input_path: Path to the input file.
         buckets: Number of buckets for partitioning (power of 2).
         workers: Number of parallel workers (None = auto).
-        verbose: Print progress information to stderr.
 
     Returns:
         Tuple of (claim_id, status_code, cycle_length) or None if no cycles.
@@ -378,30 +382,29 @@ def solve(
     ExecutorClass = _get_executor_class()
     use_process_pool = ExecutorClass is ProcessPoolExecutor
 
-    if verbose:
-        gil_status = "enabled" if _is_gil_enabled() else "disabled"
-        print(f"GIL status: {gil_status}", file=sys.stderr)
-        print(f"Using executor: {ExecutorClass.__name__}", file=sys.stderr)
+    gil_status = "enabled" if _is_gil_enabled() else "disabled"
+    logger.debug("GIL status: %s", gil_status)
+    logger.debug("Using executor: %s", ExecutorClass.__name__)
 
     # Create temporary directory for buckets
     tmp_dir = tempfile.mkdtemp(prefix="routing_cycles_")
 
     try:
         # Pass 1: Partition to buckets
-        if verbose:
-            print(f"Pass 1: Partitioning to {buckets} buckets...", file=sys.stderr)
+        logger.debug("Pass 1: Partitioning to %d buckets...", buckets)
+        t1_start = time.perf_counter()
 
         bucket_paths = partition_to_buckets(input_path, buckets, tmp_dir)
 
-        if verbose:
-            print(f"  Created {len(bucket_paths)} non-empty buckets", file=sys.stderr)
+        t1_end = time.perf_counter()
+        logger.debug("  Created %d non-empty buckets", len(bucket_paths))
 
         if not bucket_paths:
             return None
 
         # Pass 2: Process buckets in parallel using executor.map
-        if verbose:
-            print("Pass 2: Processing buckets...", file=sys.stderr)
+        logger.debug("Pass 2: Processing buckets...")
+        t2_start = time.perf_counter()
 
         # Convert Path objects to strings for pickling (ProcessPoolExecutor)
         bucket_path_strs = [str(p) for p in bucket_paths]
@@ -425,13 +428,21 @@ def solve(
                 if result is not None:
                     if best_result is None or result[2] > best_result[2]:
                         best_result = result
-                        if verbose:
-                            claim_id = result[0].decode("utf-8")
-                            status = result[1].decode("utf-8")
-                            print(f"  New best: {claim_id},{status},{result[2]}", file=sys.stderr)
+                        claim_id = result[0].decode("utf-8")
+                        status = result[1].decode("utf-8")
+                        logger.debug("  New best: %s,%s,%d", claim_id, status, result[2])
 
-        if verbose:
-            print("Pass 2: Complete.", file=sys.stderr)
+        t2_end = time.perf_counter()
+
+        # Log phase timing summary
+        t1 = t1_end - t1_start
+        t2 = t2_end - t2_start
+        total = t1 + t2
+        if total > 0:
+            logger.debug(
+                "Timing: Pass1=%.2fs (%.0f%%), Pass2=%.2fs (%.0f%%), Total=%.2fs",
+                t1, 100 * t1 / total, t2, 100 * t2 / total, total
+            )
 
         # Decode bytes to strings for final result
         if best_result is not None:
@@ -447,16 +458,15 @@ def solve(
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def main_solve(input_path: str, buckets: int = 1024, verbose: bool = False) -> None:
+def main_solve(input_path: str, buckets: int = 1024) -> None:
     """
     Main entry point that prints result to stdout.
 
     Args:
         input_path: Path to the input file.
         buckets: Number of buckets for partitioning.
-        verbose: Print progress information to stderr.
     """
-    result = solve(input_path, buckets=buckets, verbose=verbose)
+    result = solve(input_path, buckets=buckets)
 
     if result:
         claim_id, status_code, cycle_length = result
@@ -466,10 +476,19 @@ def main_solve(input_path: str, buckets: int = 1024, verbose: bool = False) -> N
 
 
 # === main.py ===
-"""CLI entry point for the Routing Cycle Detector."""
-
 import argparse
+import logging
+import sys
 
+
+
+def configure_logging(level: int = logging.WARNING) -> None:
+    """Configure logging to write to stderr."""
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -492,9 +511,10 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Print progress information to stderr",
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="WARNING",
+        help="Logging level (default: WARNING)",
     )
 
     return parser
@@ -505,6 +525,10 @@ def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
 
+    # Configure logging based on --log-level
+    log_level = getattr(logging, args.log_level)
+    configure_logging(log_level)
+
     # Validate buckets is power of 2
     if args.buckets & (args.buckets - 1) != 0:
         parser.error(f"--buckets must be a power of 2, got {args.buckets}")
@@ -512,7 +536,6 @@ def main() -> None:
     main_solve(
         input_path=args.input_file,
         buckets=args.buckets,
-        verbose=args.verbose,
     )
 
 

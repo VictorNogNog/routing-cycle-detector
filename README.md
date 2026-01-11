@@ -18,9 +18,6 @@ The solution is a standalone PEP 723 script that can be executed directly:
 
 # Via Python interpreter
 python3 my_solution.py data/large_input_v1.txt
-
-# Via uv (recommended for dependency management)
-uv run --script my_solution.py data/large_input_v1.txt
 ```
 
 **Output behavior:**
@@ -30,13 +27,13 @@ uv run --script my_solution.py data/large_input_v1.txt
 ### CLI Options
 
 ```bash
-./my_solution.py <input_file> [--buckets N] [--verbose]
+./my_solution.py <input_file> [--buckets N] [--log-level {DEBUG,INFO,WARNING,ERROR}]
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--buckets` | 1024 | Number of partition buckets (must be power of 2) |
-| `--verbose` | off | Print progress information to stderr |
+| `--log-level` | WARNING | Choices: DEBUG, INFO, WARNING, ERROR |
 
 ---
 
@@ -70,13 +67,7 @@ After all buckets complete, reduce results to find the global maximum cycle.
 
 ### Partitioning and LRU File-Handle Cache
 
-Opening thousands of bucket files simultaneously would exhaust file descriptor limits. The partitioner uses an **LRU (Least Recently Used) cache** that keeps at most `MAX_OPEN_HANDLES` (default: 128) file handles open at once. When writing to a bucket:
-
-1. If the handle is cached, use it (and mark as recently used)
-2. If not cached and cache is full, evict the least-recently-used handle (close it)
-3. Open the new handle and add to cache
-
-This allows streaming to any number of buckets while respecting OS limits.
+The partitioner uses an **LRU (Least Recently Used) cache** that keeps at most `MAX_OPEN_HANDLES` (default: 128) file handles open at once.This allows streaming to any number of buckets while respecting OS limits.
 
 ### Bytes-First Parsing
 
@@ -161,104 +152,34 @@ When using `ProcessPoolExecutor`, we use `executor.map(..., chunksize=16)` to re
 Overview of the complete two-pass architecture from input to output:
 
 ```mermaid
-graph TD
-  A[CLI run: python my_solution.py INPUT] --> B[Parse args: buckets and verbose]
-  B --> C[Validate buckets power of two]
-  C --> D{GIL enabled}
-  D -->|yes| E[Use ProcessPoolExecutor]
-  D -->|no| F[Use ThreadPoolExecutor]
+flowchart TD
+    %% High contrast styling
+    classDef storage fill:#ffffff,stroke:#000000,stroke-width:2px,color:#000000;
+    classDef process fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000000;
+    classDef decision fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#000000;
 
-  C --> G[Create temp dir routing_cycles]
-  G --> H[Pass 1: partition_to_buckets]
-  H --> I[Pass 2: process_bucket in parallel]
-  I --> J[Reduce: select global best]
-  J --> K[Decode winner and print CSV]
-  K --> L[Cleanup: delete temp dir]
+    subgraph Phase1 ["Phase 1: Sequential Partitioning"]
+        Input["Input File"]:::storage --> ParseAndHash["Extract & Hash ClaimID + Status"]:::process
+        ParseAndHash --> BucketIndex["Determine Bucket Index"]:::process
+        BucketIndex --> DiskBuckets["Write to Disk bucket_0000.bin ..."]:::storage
+    end
 
-  subgraph PASS1[Pass 1 details]
-    H1[Open input rb and stream lines] --> H2[Rstrip newline and split with max 3]
-    H2 --> H3[Compute bucket index using CRC32]
-    H3 --> H4[Write raw line to bucket file]
-    H4 --> H5[LRU cache limits open file handles]
-    H5 --> H6[Close all bucket handles]
-    H6 --> H7[Return non empty bucket paths]
-  end
+    subgraph Phase2 ["Phase 2: Parallel Analysis"]
+        DiskBuckets --> Scheduler{"Scheduler Process/Thread Pool"}:::decision
+        
+        subgraph WorkerLogic ["Per-Bucket Processing"]
+            Scheduler -->|Map Bucket Paths| BuildGraph["Build Adjacency List Group by ClaimID + Status"]:::process
+            BuildGraph --> CheckType{"Is Functional Graph? Max Out-Degree <= 1"}:::decision
+            
+            CheckType -- Yes --> AlgoFunctional["Algorithm A: Linear Walk O N Traversal with Path Tracking"]:::process
+            CheckType -- No --> AlgoDFS["Algorithm B: DFS Backtracking Sort Nodes and Skip Lower Indices"]:::process
+            
+            AlgoFunctional --> LocalMax["Identify Longest Cycle in Bucket"]:::process
+            AlgoDFS --> LocalMax
+        end
+    end
 
-  H --> H1
-  H7 --> I
-
-  subgraph EXEC[Executor choice]
-    E --> I
-    F --> I
-  end
-```
-
-### Bucket Analysis Details
-
-Detailed view of how each bucket is processed to build graphs and detect cycles:
-
-```mermaid
-graph TD
-  P[process_bucket for one bucket] --> R[Read bucket file rb line by line]
-  R --> S[Rstrip newline and split with max 3]
-  S --> T[Key is claim bytes and status bytes]
-  T --> U[Adjacency: src maps to set of dst]
-  U --> V[Track max unique out degree per group]
-
-  V --> W[For each group in this bucket]
-  W --> X{Max out degree <= 1}
-  X -->|yes| Y[Use functional graph cycle finder]
-  X -->|no| Z[Use DFS cycle finder]
-
-  Z --> Z1[Sort nodes and assign index]
-  Z1 --> Z2[For each start index i]
-  Z2 --> Z3[DFS only to nodes with index >= i]
-  Z3 --> Z4[Count cycle only when returning to start]
-
-  Y --> AA[Local best cycle length]
-  Z4 --> AA
-  AA --> AB[Return best tuple or none]
-```
-
-### Sequence Diagram
-
-Interaction sequence between components during execution:
-
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant CLI as main
-  participant SOL as solve
-  participant P1 as partition
-  participant LRU as LRU cache
-  participant EX as Executor
-  participant W as Worker
-  participant OUT as STDOUT
-
-  U->>CLI: run script with input path
-  CLI->>SOL: call solve with buckets and verbose
-  SOL->>SOL: create temp dir
-  SOL->>P1: pass 1 stream input bytes
-
-  loop each input line
-    P1->>P1: rstrip newline, split into 4 fields
-    P1->>P1: compute bucket index via CRC32
-    P1->>LRU: write raw line to bucket file
-    Note over LRU: open on demand, evict least recently used when full
-  end
-
-  P1-->>SOL: return list of non empty bucket paths
-  SOL->>EX: map process_bucket over bucket paths
-
-  par bucket processing
-    EX->>W: process_bucket for one bucket
-    W-->>EX: return best claim,status,length for that bucket
-  end
-
-  EX-->>SOL: stream results back
-  SOL->>SOL: reduce to global best
-  SOL->>OUT: print claim,status,length
-  SOL->>SOL: delete temp dir
+    LocalMax --> Output["Reduce & output Global Max ClaimID, Status, Length"]:::storage
 ```
 
 ---
@@ -267,26 +188,64 @@ sequenceDiagram
 
 ### Methodology
 
-The benchmark script `my_solution_benchmark_gil.py` provides a rigorous comparison between free-threaded and GIL-enforced execution:
+The benchmark script `my_solution_benchmark_gil.py` provides a rigorous comparison of execution modes:
 
-- **Alternating trial order:** Odd trials run free-threaded first, even trials run GIL-enforced first. This cancels out "second run wins" effects from OS page cache warming.
+- **Rotating trial order:** Each trial rotates the execution order of configurations to distribute "second run wins" effects from OS page cache warming.
 - **Warm-up runs:** Initial runs are discarded to eliminate cold-start bias.
 - **Wall-clock timing:** Uses GNU `/usr/bin/time -v` for accurate elapsed time measurement.
 - **Process-tree memory:** Uses `psutil` to sample RSS across the parent process and ALL child processes (recursively). This is critical because:
   - `ThreadPoolExecutor` (free-threaded): Single process, parent RSS ≈ total
   - `ProcessPoolExecutor` (GIL-enforced): Multiple worker processes; parent RSS alone hides 90%+ of actual memory usage
 
-### Running the Benchmark
+### Interpreting Results
+
+#### Why holding the executor constant matters
+
+A naïve "free-threaded vs GIL-enforced" comparison is **misleading** because it conflates two variables:
+
+1. **GIL status:** Whether threads can run Python bytecode in parallel
+2. **Executor type:** `ThreadPoolExecutor` (shared memory, single process) vs `ProcessPoolExecutor` (separate heaps, multiple processes)
+
+By default, the solution uses threads when GIL is off and processes when GIL is on. This means a simple comparison doesn't isolate free-threading's benefit—it also includes the overhead/advantage of the executor itself.
+
+The `--all-modes` benchmark runs a **2×2 matrix** to separate these effects:
+
+| | GIL-off (free-threaded) | GIL-on (standard) |
+|---|---|---|
+| **ThreadPoolExecutor** | True parallelism | GIL serialization |
+| **ProcessPoolExecutor** | Parallel (separate heaps) | Parallel (separate heaps) |
+
+#### Why ProcessPoolExecutor can be faster (but uses more memory)
+
+On allocation-heavy Python workloads, `ProcessPoolExecutor` sometimes outperforms threads because:
+
+- **Separate heaps:** Each worker has its own memory allocator with no contention.
+- **No GIL overhead:** Even with GIL-off, some internal locks remain; separate processes avoid all shared-state coordination.
+
+The trade-off is **memory**: each worker duplicates interpreter state and working data. In the results below, processes use ~4× more memory than threads.
+
+#### Why ThreadPool + GIL-on is slow for CPU-bound work
+
+With the GIL enabled, only one thread can execute Python bytecode at a time. CPU-bound work cannot parallelize—threads just take turns. This is why the **threads-only comparison** (`--executor threads`) isolates the true free-threading benefit:
+
+| Dataset | Threads GIL-off | Threads GIL-on | Speedup |
+|---------|-----------------|----------------|---------|
+| large_input_v1.txt | 17.1s | 28.6s | **1.67×** |
+| synth_11m_nodes10_od2.txt | 11.5s | 66.8s | **5.81×** |
+
+These speedups represent pure free-threading gains with no executor confound.
+
+### What to Run
 
 ```bash
-# Basic run with defaults (7 trials, 1 warmup)
-./my_solution_benchmark_gil.py data/large_input_v1.txt
+# Full 2×2 matrix (recommended for complete analysis)
+./my_solution_benchmark_gil.py data/large_input_v1.txt --all-modes --trials 16
 
-# Custom configuration
-./my_solution_benchmark_gil.py data/large_input_v1.txt \
-    --trials 5 \
-    --warmup 2 \
-    --mem-sample-ms 50
+# Threads-only comparison (isolates free-threading benefit)
+./my_solution_benchmark_gil.py data/large_input_v1.txt --trials 16 --executor threads
+
+# Processes-only comparison (baseline for multiprocessing)
+./my_solution_benchmark_gil.py data/large_input_v1.txt --trials 16 --executor processes
 ```
 
 | Option | Default | Description |
@@ -294,53 +253,120 @@ The benchmark script `my_solution_benchmark_gil.py` provides a rigorous comparis
 | `--trials` | 7 | Number of timed trials per mode |
 | `--warmup` | 1 | Warm-up runs per mode (not counted) |
 | `--mem-sample-ms` | 75 | Memory sampling interval in milliseconds |
+| `--all-modes` | off | Run full 2×2 matrix (threads/processes × GIL on/off) |
+| `--executor` | auto | Force executor: `auto`, `threads`, or `processes` |
 | `--synthetic` | off | Auto-generate input if file missing |
 
-### Results on large_input_v1.txt
+### Benchmark Results
+
+#### Results: data/large_input_v1.txt
 
 ```
-================================================================================
-GIL Benchmark: Free-threaded vs GIL-enforced
-================================================================================
+===============================================================================================
+GIL Benchmark: Full 2×2 Matrix (Executor × GIL)
+===============================================================================================
 Input: data/large_input_v1.txt
-Trials: 2 | Warm-up runs: 1
+Trials: 16 | Warm-up runs: 1
+Mode: All combinations (threads×GIL-off, threads×GIL-on, procs×GIL-off, procs×GIL-on)
 Memory sampling: 75ms interval (process-tree RSS via psutil)
-Python: ...
+Python: .../my-solution-benchmark-gil-bfd3788b0a2e0e6a/bin/python3
 Wall-clock timing: GNU time
 
 Warming up (1 run(s) per mode, not counted)...
   Warm-up complete.
 
-Running 2 trials (alternating order to reduce bias)...
-  Trial 1/2: Free=42.79s/228MiB, GIL=44.97s/958MiB
-  Trial 2/2: Free=43.81s/232MiB, GIL=45.52s/953MiB
+Running 16 trials (rotating order to reduce bias)...
+  Trial 1/16: threads+GIL-off=17.5s, threads+GIL-on=28.8s, procs+GIL-off=14.8s, procs+GIL-on=17.0s
+  ...
+  Trial 16/16: threads+GIL-off=15.1s, threads+GIL-on=28.4s, procs+GIL-off=14.8s, procs+GIL-on=17.4s
 
-================================================================================
-RESULTS
-================================================================================
-Mode            Median(s)   Min(s)    Max(s)    Peak RSS Tree  time-v RSS  Output
---------------------------------------------------------------------------------
-Free-threaded   43.300      42.790    43.810    230.0          228.8       190211,190310,10
-GIL-enforced    45.245      44.970    45.520    955.6          28.8        190211,190310,10
---------------------------------------------------------------------------------
+===============================================================================================
+RESULTS (2×2 Matrix: Executor × GIL)
+===============================================================================================
+Executor     GIL      Median(s)   Min(s)    Max(s)    Peak RSS(MiB)  Output              
+-----------------------------------------------------------------------------------------------
+threads      off      17.115      15.000    17.530    229.2          190211,190310,10    
+threads      on       28.570      26.510    29.110    230.3          190211,190310,10    
+processes    off      16.790      14.600    17.180    969.2          190211,190310,10    
+processes    on       15.280      14.680    17.350    968.8          190211,190310,10    
+-----------------------------------------------------------------------------------------------
 
-Peak RSS Tree = sum of RSS across parent + all child processes (via psutil)
-time-v RSS    = parent process only (from /usr/bin/time -v)
+SPEEDUPS (GIL-on / GIL-off ratio for each executor):
 
-Speedup (GIL-enforced / Free-threaded): 1.04x
-  -> Free-threading is 1.04x faster
-================================================================================
+  Threads:   1.67x (GIL-off is 1.67x faster)
+  Processes: 0.91x (GIL-on is 1.10x faster)
+
+MEMORY COMPARISON:
+  Threads GIL-off:   229.2 MiB
+  Threads GIL-on:    230.3 MiB
+  Processes GIL-off: 969.2 MiB
+  Processes GIL-on:  968.8 MiB
+
+===============================================================================================
+```
+
+#### Results: data/synth_11m_nodes10_od2.txt
+
+```
+===============================================================================================
+GIL Benchmark: Full 2×2 Matrix (Executor × GIL)
+===============================================================================================
+Input: data/synth_11m_nodes10_od2.txt
+Trials: 16 | Warm-up runs: 1
+Mode: All combinations (threads×GIL-off, threads×GIL-on, procs×GIL-off, procs×GIL-on)
+Memory sampling: 75ms interval (process-tree RSS via psutil)
+Python: /home/victor/.cache/uv/environments-v2/my-solution-benchmark-gil-bfd3788b0a2e0e6a/bin/python3
+Wall-clock timing: GNU time
+
+Warming up (1 run(s) per mode, not counted)...
+  Warm-up complete.
+
+Running 16 trials (rotating order to reduce bias)...
+  Trial 1/16: threads+GIL-off=11.5s, threads+GIL-on=66.8s, procs+GIL-off=9.1s, procs+GIL-on=11.5s
+  ...
+  Trial 16/16: threads+GIL-off=11.4s, threads+GIL-on=69.0s, procs+GIL-off=9.3s, procs+GIL-on=9.1s
+
+===============================================================================================
+RESULTS (2×2 Matrix: Executor × GIL)
+===============================================================================================
+Executor     GIL      Median(s)   Min(s)    Max(s)    Peak RSS(MiB)  Output              
+-----------------------------------------------------------------------------------------------
+threads      off      11.505      11.200    13.750    377.7          699,190310,10       
+threads      on       66.810      66.480    69.050    298.3          699,190310,10       
+processes    off      9.160       9.020     11.460    1751.6         699,190310,10       
+processes    on       9.290       9.130     11.610    1751.0         699,190310,10       
+-----------------------------------------------------------------------------------------------
+
+SPEEDUPS (GIL-on / GIL-off ratio for each executor):
+
+  Threads:   5.81x (GIL-off is 5.81x faster)
+  Processes: 1.01x (GIL-off is 1.01x faster)
+
+MEMORY COMPARISON:
+  Threads GIL-off:   377.7 MiB
+  Threads GIL-on:    298.3 MiB
+  Processes GIL-off: 1751.6 MiB
+  Processes GIL-on:  1751.0 MiB
+
+===============================================================================================
 ```
 
 ### Key Observations
 
-| Metric | Free-threaded | GIL-enforced | Notes |
-|--------|---------------|--------------|-------|
-| **Median Time** | 43.3s | 45.2s | Free-threading 1.04x faster |
-| **Peak RSS (Tree)** | 230 MiB | 956 MiB | 4x more memory with ProcessPool |
-| **time-v RSS** | 229 MiB | 29 MiB | **Misleading!** Hides worker memory |
+| Metric | large_input_v1.txt | synth_11m_nodes10_od2.txt |
+|--------|-------------------|---------------------------|
+| **Threads speedup (GIL-off vs GIL-on)** | 1.67× | 5.81× |
+| **Processes speedup** | ~1.0× (GIL irrelevant) | ~1.0× (GIL irrelevant) |
+| **Thread memory** | ~230 MiB | ~300-380 MiB |
+| **Process memory** | ~969 MiB (4.2×) | ~1751 MiB (4.6×) |
 
-The `time-v RSS` metric for GIL-enforced mode shows only 29 MiB because `/usr/bin/time` only measures the parent process. The actual memory usage across all worker processes is **956 MiB**—over 33x higher. This demonstrates why process-tree measurement via `psutil` is essential for accurate benchmarking of multiprocess workloads.
+**Takeaways:**
+
+1. **Free-threading delivers real speedups** for CPU-bound cycle detection: 1.67× on real data, 5.81× on synthetic (which has denser graphs requiring more computation).
+
+2. **ProcessPoolExecutor hides GIL overhead** but at significant memory cost (~4× more than threads). It's faster than threads+GIL-on but comparable to threads+GIL-off.
+
+3. **Memory measurement matters:** Parent-only RSS (from `/usr/bin/time -v`) would show ~29 MiB for processes, hiding the 969 MiB actual usage. Process-tree measurement via `psutil` is essential for accurate comparison.
 
 ---
 
@@ -399,12 +425,7 @@ routing-cycle-detector/
 │   └── large_input_v1.txt            # Challenge dataset
 └── diagrams/
     ├── End-to-End Pipeline.md
-    ├── Bucket Analysis Details.md
     └── Sequence Diagram.md
 ```
 
 ---
-
-## License
-
-MIT

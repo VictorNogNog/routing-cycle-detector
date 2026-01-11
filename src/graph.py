@@ -1,5 +1,3 @@
-"""Pass 2: Build graphs from bucket data and detect longest cycles."""
-
 from collections import defaultdict
 
 
@@ -25,7 +23,6 @@ def process_bucket(bucket_path: str) -> tuple[bytes, bytes, int] | None:
     # Track max out-degree per group to detect functional graphs
     max_out_degree: dict[tuple[bytes, bytes], int] = defaultdict(int)
 
-    # Read and parse bucket file - keep everything as bytes
     with open(bucket_path, "rb") as f:
         for line in f:
             line = line.rstrip(b"\n\r")
@@ -54,7 +51,6 @@ def process_bucket(bucket_path: str) -> tuple[bytes, bytes, int] | None:
                 if new_size > max_out_degree[key]:
                     max_out_degree[key] = new_size
 
-    # Find longest cycle across all (claim_id, status) groups
     best_result: tuple[bytes, bytes, int] | None = None
 
     for key, adj in edges.items():

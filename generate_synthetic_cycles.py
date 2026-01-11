@@ -11,11 +11,14 @@ to become extremely expensive. Recommended defaults: nodes=32, out-degree=2.
 """
 
 import argparse
+import logging
 import random
 import sys
 
 # Large buffer for efficient streaming writes
 BUFFER_SIZE = 1024 * 1024  # 1MB
+
+logger = logging.getLogger(__name__)
 
 
 def generate_group_edges(
@@ -119,7 +122,7 @@ def generate_synthetic_dataset(
 
             # Progress indicator every 10000 groups
             if (g + 1) % 10000 == 0:
-                print(f"  Generated {g + 1}/{num_groups} groups...", file=sys.stderr)
+                logger.debug("  Generated %d/%d groups...", g + 1, num_groups)
 
     return total_lines
 
@@ -182,8 +185,22 @@ Examples:
         default=1,
         help="Random seed for reproducibility (default: 1)",
     )
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="WARNING",
+        help="Logging level (default: WARNING)",
+    )
 
     args = parser.parse_args()
+
+    # Configure logging
+    log_level = getattr(logging, args.log_level)
+    logging.basicConfig(
+        level=log_level,
+        format="%(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
 
     # Validate
     if args.nodes < 3:
@@ -199,23 +216,22 @@ Examples:
     # Approximate line length: ~35 chars
     approx_size_mb = (total_edges * 35) / (1024 * 1024)
 
-    print("=" * 60, file=sys.stderr)
-    print("Synthetic Cycle Dataset Generator", file=sys.stderr)
-    print("=" * 60, file=sys.stderr)
-    print(f"Output: {args.out}", file=sys.stderr)
-    print(f"Groups: {args.groups:,}", file=sys.stderr)
-    print(f"Nodes per group: {args.nodes}", file=sys.stderr)
-    print(f"Out-degree: {args.out_degree}", file=sys.stderr)
-    print(f"Chord mode: {args.chord_mode}", file=sys.stderr)
-    print(f"Status code: {args.status}", file=sys.stderr)
-    print(f"Seed: {args.seed}", file=sys.stderr)
-    print(f"Estimated lines: {total_edges:,}", file=sys.stderr)
-    print(f"Estimated size: ~{approx_size_mb:.1f} MB", file=sys.stderr)
-    print("=" * 60, file=sys.stderr)
-    print(file=sys.stderr)
+    logger.info("=" * 60)
+    logger.info("Synthetic Cycle Dataset Generator")
+    logger.info("=" * 60)
+    logger.info("Output: %s", args.out)
+    logger.info("Groups: %s", f"{args.groups:,}")
+    logger.info("Nodes per group: %d", args.nodes)
+    logger.info("Out-degree: %d", args.out_degree)
+    logger.info("Chord mode: %s", args.chord_mode)
+    logger.info("Status code: %d", args.status)
+    logger.info("Seed: %d", args.seed)
+    logger.info("Estimated lines: %s", f"{total_edges:,}")
+    logger.info("Estimated size: ~%.1f MB", approx_size_mb)
+    logger.info("=" * 60)
 
     # Generate
-    print("Generating...", file=sys.stderr)
+    logger.info("Generating...")
     total_lines = generate_synthetic_dataset(
         output_path=args.out,
         num_groups=args.groups,
@@ -226,10 +242,9 @@ Examples:
         seed=args.seed,
     )
 
-    print(file=sys.stderr)
-    print("=" * 60, file=sys.stderr)
-    print(f"Done! Wrote {total_lines:,} lines to {args.out}", file=sys.stderr)
-    print("=" * 60, file=sys.stderr)
+    logger.info("=" * 60)
+    logger.info("Done! Wrote %s lines to %s", f"{total_lines:,}", args.out)
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":
