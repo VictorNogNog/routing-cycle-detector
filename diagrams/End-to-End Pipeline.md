@@ -23,7 +23,7 @@ graph TD
   end
 
   H --> H1
-  H7 --> I
+  H6 --> I
 
   subgraph EXEC[Executor choice]
     E --> I

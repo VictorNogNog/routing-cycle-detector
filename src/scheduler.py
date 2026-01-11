@@ -1,5 +1,6 @@
 """Orchestration: Coordinate partitioning and parallel cycle detection."""
 
+import os
 import sys
 import tempfile
 import shutil
@@ -12,6 +13,10 @@ from .graph import process_bucket
 # Chunksize for ProcessPoolExecutor.map to reduce IPC overhead
 PROCESS_POOL_CHUNKSIZE = 16
 
+# Environment variable to override executor selection
+# Values: "threads", "processes", "auto" (or unset)
+RC_EXECUTOR_ENV = "RC_EXECUTOR"
+
 
 def _is_gil_enabled() -> bool:
     """Check if GIL is enabled."""
@@ -23,15 +28,24 @@ def _is_gil_enabled() -> bool:
 
 def _get_executor_class():
     """
-    Select the appropriate executor based on GIL status.
+    Select the appropriate executor.
 
-    If GIL is disabled (free-threading), use ThreadPoolExecutor.
-    If GIL is enabled, fall back to ProcessPoolExecutor.
+    Priority:
+    1. RC_EXECUTOR env var override ("threads" or "processes")
+    2. Auto-select based on GIL status (disabled -> threads, enabled -> processes)
     """
-    if _is_gil_enabled():
+    executor_override = os.environ.get(RC_EXECUTOR_ENV, "").lower()
+
+    if executor_override == "threads":
+        return ThreadPoolExecutor
+    elif executor_override == "processes":
         return ProcessPoolExecutor
     else:
-        return ThreadPoolExecutor
+        # Auto-select based on GIL status
+        if _is_gil_enabled():
+            return ProcessPoolExecutor
+        else:
+            return ThreadPoolExecutor
 
 
 def solve(

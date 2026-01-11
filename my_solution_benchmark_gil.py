@@ -6,8 +6,12 @@
 """
 Benchmark script comparing Free-threaded vs GIL-enforced execution.
 
-Runs my_solution.py under both conditions with multiple trials,
+Runs my_solution.py under various conditions with multiple trials,
 measures wall-clock time and peak RSS (process tree), and reports statistical summary.
+
+Supports:
+- 2-mode comparison: Free-threaded vs GIL-enforced (with optional executor override)
+- 4-mode matrix (--all-modes): threads×{GIL-off, GIL-on} + processes×{GIL-off, GIL-on}
 
 Uses psutil to track memory across the entire process tree (parent + all children),
 which is essential for accurate measurement when ProcessPoolExecutor is used.
@@ -175,6 +179,7 @@ def run_benchmark(
     env_overrides: dict[str, str],
     use_timev: bool,
     mem_sample_ms: int,
+    mode_label: str = "",
 ) -> dict:
     """
     Run my_solution.py and capture timing and memory metrics.
@@ -185,9 +190,10 @@ def run_benchmark(
     Args:
         script_path: Path to my_solution.py.
         input_file: Path to input data file.
-        env_overrides: Environment variable overrides (e.g., {"PYTHON_GIL": "1"}).
+        env_overrides: Environment variable overrides.
         use_timev: If True, wrap with /usr/bin/time -v for wall-clock timing.
         mem_sample_ms: Memory sampling interval in milliseconds.
+        mode_label: Optional label for the mode (for error messages).
 
     Returns:
         Dict with keys: mode, seconds, peak_rss_tree_mib, timev_rss_mib, output.
@@ -195,7 +201,8 @@ def run_benchmark(
     env = os.environ.copy()
     env.update(env_overrides)
 
-    mode = "GIL-enforced" if env_overrides.get("PYTHON_GIL") == "1" else "Free-threaded"
+    if not mode_label:
+        mode_label = "GIL-enforced" if env_overrides.get("PYTHON_GIL") == "1" else "Free-threaded"
     poll_interval_s = mem_sample_ms / 1000.0
 
     # Build command
@@ -222,7 +229,7 @@ def run_benchmark(
     elapsed_perf = time.perf_counter() - start_time
 
     if proc.returncode != 0:
-        print(f"Error running benchmark ({mode}):", file=sys.stderr)
+        print(f"Error running benchmark ({mode_label}):", file=sys.stderr)
         print(stderr, file=sys.stderr)
         sys.exit(1)
 
@@ -241,7 +248,7 @@ def run_benchmark(
     peak_rss_tree_mib = peak_rss_bytes / (1024 * 1024)
 
     return {
-        "mode": mode,
+        "mode": mode_label,
         "seconds": seconds,
         "peak_rss_tree_mib": peak_rss_tree_mib,
         "timev_rss_mib": timev_rss_mib,
@@ -286,90 +293,34 @@ def generate_synthetic_if_needed(
     print(file=sys.stderr)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Benchmark Free-threaded vs GIL-enforced Python execution."
-    )
-    parser.add_argument("input_file", help="Path to input data file")
-    parser.add_argument(
-        "--trials", type=int, default=7, help="Number of timed trials per mode (default: 7)"
-    )
-    parser.add_argument(
-        "--warmup", type=int, default=1, help="Number of warm-up runs per mode (default: 1)"
-    )
-    parser.add_argument(
-        "--mem-sample-ms",
-        type=int,
-        default=75,
-        help="Memory sampling interval in milliseconds (default: 75)",
-    )
-    parser.add_argument(
-        "--synthetic",
-        action="store_true",
-        help="Generate synthetic dataset if input_file doesn't exist",
-    )
-    parser.add_argument(
-        "--synthetic-groups",
-        type=int,
-        default=175000,
-        help="Number of groups for synthetic data (default: 175000)",
-    )
-    parser.add_argument(
-        "--synthetic-nodes",
-        type=int,
-        default=32,
-        help="Nodes per group for synthetic data (default: 32)",
-    )
-    parser.add_argument(
-        "--synthetic-out-degree",
-        type=int,
-        default=2,
-        help="Out-degree for synthetic data (default: 2)",
-    )
-    args = parser.parse_args()
+def compute_stats(results: list[dict]) -> dict:
+    """Compute statistics from a list of benchmark results."""
+    times = [r["seconds"] for r in results]
+    rss_tree = [r["peak_rss_tree_mib"] for r in results]
+    rss_timev = [r["timev_rss_mib"] for r in results if r["timev_rss_mib"] == r["timev_rss_mib"]]
+    output = results[0]["output"] if results else ""
 
-    input_file = args.input_file
-    num_trials = args.trials
-    num_warmup = args.warmup
-    mem_sample_ms = args.mem_sample_ms
+    return {
+        "median_time": median(times),
+        "min_time": min(times),
+        "max_time": max(times),
+        "median_rss_tree": median(rss_tree),
+        "median_rss_timev": median(rss_timev) if rss_timev else float("nan"),
+        "output": output,
+    }
 
-    # Generate synthetic data if requested and file doesn't exist
-    if args.synthetic and not Path(input_file).exists():
-        generate_synthetic_if_needed(
-            input_file,
-            groups=args.synthetic_groups,
-            nodes=args.synthetic_nodes,
-            out_degree=args.synthetic_out_degree,
-        )
 
-    if not Path(input_file).exists():
-        print(f"Error: Input file not found: {input_file}", file=sys.stderr)
-        if not args.synthetic:
-            print("  Hint: Use --synthetic to auto-generate test data", file=sys.stderr)
-        sys.exit(1)
-
-    script_path = Path(__file__).parent / "my_solution.py"
-    if not script_path.exists():
-        print(f"Error: Solution script not found: {script_path}", file=sys.stderr)
-        sys.exit(1)
-
-    # Check for /usr/bin/time
-    use_timev = check_timev_available()
-
-    # Environment configs
-    env_free = {}  # Free-threaded: default (no PYTHON_GIL override)
-    env_gil = {"PYTHON_GIL": "1"}  # GIL-enforced
-
-    print("=" * 80)
-    print("GIL Benchmark: Free-threaded vs GIL-enforced")
-    print("=" * 80)
-    print(f"Input: {input_file}")
-    print(f"Trials: {num_trials} | Warm-up runs: {num_warmup}")
-    print(f"Memory sampling: {mem_sample_ms}ms interval (process-tree RSS via psutil)")
-    print(f"Python: {sys.executable}")
-    print(f"Wall-clock timing: {'GNU time' if use_timev else 'time.perf_counter()'}")
-    print()
-
+def run_two_mode_benchmark(
+    script_path: Path,
+    input_file: str,
+    env_free: dict[str, str],
+    env_gil: dict[str, str],
+    use_timev: bool,
+    mem_sample_ms: int,
+    num_trials: int,
+    num_warmup: int,
+) -> None:
+    """Run the standard 2-mode benchmark (Free-threaded vs GIL-enforced)."""
     # Warm-up runs (not counted)
     print(f"Warming up ({num_warmup} run(s) per mode, not counted)...")
     for _ in range(num_warmup):
@@ -402,22 +353,6 @@ def main() -> None:
         )
 
     print()
-
-    # Compute statistics
-    def compute_stats(results: list[dict]) -> dict:
-        times = [r["seconds"] for r in results]
-        rss_tree = [r["peak_rss_tree_mib"] for r in results]
-        rss_timev = [r["timev_rss_mib"] for r in results if r["timev_rss_mib"] == r["timev_rss_mib"]]
-        output = results[0]["output"] if results else ""
-
-        return {
-            "median_time": median(times),
-            "min_time": min(times),
-            "max_time": max(times),
-            "median_rss_tree": median(rss_tree),
-            "median_rss_timev": median(rss_timev) if rss_timev else float("nan"),
-            "output": output,
-        }
 
     stats_free = compute_stats(results_free)
     stats_gil = compute_stats(results_gil)
@@ -490,6 +425,271 @@ def main() -> None:
     else:
         print("  -> No difference")
     print("=" * 80)
+
+
+def run_all_modes_benchmark(
+    script_path: Path,
+    input_file: str,
+    use_timev: bool,
+    mem_sample_ms: int,
+    num_trials: int,
+    num_warmup: int,
+) -> None:
+    """Run the full 2×2 matrix benchmark: (threads, processes) × (GIL-off, GIL-on)."""
+    # Define all 4 configurations
+    configs = [
+        {"label": "threads+GIL-off", "executor": "threads", "gil": False},
+        {"label": "threads+GIL-on", "executor": "threads", "gil": True},
+        {"label": "procs+GIL-off", "executor": "processes", "gil": False},
+        {"label": "procs+GIL-on", "executor": "processes", "gil": True},
+    ]
+
+    def make_env(cfg: dict) -> dict[str, str]:
+        env: dict[str, str] = {"RC_EXECUTOR": cfg["executor"]}
+        if cfg["gil"]:
+            env["PYTHON_GIL"] = "1"
+        return env
+
+    # Warm-up runs (not counted)
+    print(f"Warming up ({num_warmup} run(s) per mode, not counted)...")
+    for _ in range(num_warmup):
+        for cfg in configs:
+            run_benchmark(
+                script_path, input_file, make_env(cfg), use_timev, mem_sample_ms, cfg["label"]
+            )
+    print("  Warm-up complete.")
+    print()
+
+    # Results storage
+    results: dict[str, list[dict]] = {cfg["label"]: [] for cfg in configs}
+
+    # Timed trials with rotating order to reduce bias
+    print(f"Running {num_trials} trials (rotating order to reduce bias)...")
+    for trial in range(1, num_trials + 1):
+        # Rotate order based on trial number
+        rotation = (trial - 1) % len(configs)
+        order = configs[rotation:] + configs[:rotation]
+
+        trial_results = {}
+        for cfg in order:
+            r = run_benchmark(
+                script_path, input_file, make_env(cfg), use_timev, mem_sample_ms, cfg["label"]
+            )
+            results[cfg["label"]].append(r)
+            trial_results[cfg["label"]] = r
+
+        # Print trial summary
+        summary_parts = [
+            f"{cfg['label']}={trial_results[cfg['label']]['seconds']:.1f}s"
+            for cfg in configs
+        ]
+        print(f"  Trial {trial}/{num_trials}: {', '.join(summary_parts)}")
+
+    print()
+
+    # Compute stats for each configuration
+    all_stats: dict[str, dict] = {}
+    for cfg in configs:
+        all_stats[cfg["label"]] = compute_stats(results[cfg["label"]])
+
+    # Verify all outputs match
+    outputs = [all_stats[cfg["label"]]["output"] for cfg in configs]
+    if len(set(outputs)) > 1:
+        print("WARNING: Outputs differ between modes!", file=sys.stderr)
+        for cfg in configs:
+            print(f"  {cfg['label']}: {all_stats[cfg['label']]['output']}", file=sys.stderr)
+        print()
+
+    # Print results table
+    print("=" * 95)
+    print("RESULTS (2×2 Matrix: Executor × GIL)")
+    print("=" * 95)
+
+    # Header
+    print(
+        f"{'Executor':<12} {'GIL':<8} {'Median(s)':<11} {'Min(s)':<9} {'Max(s)':<9} "
+        f"{'Peak RSS(MiB)':<14} {'Output':<20}"
+    )
+    print("-" * 95)
+
+    # Print rows
+    for cfg in configs:
+        stats = all_stats[cfg["label"]]
+        executor_name = "threads" if cfg["executor"] == "threads" else "processes"
+        gil_status = "on" if cfg["gil"] else "off"
+        print(
+            f"{executor_name:<12} {gil_status:<8} {stats['median_time']:<11.3f} "
+            f"{stats['min_time']:<9.3f} {stats['max_time']:<9.3f} "
+            f"{stats['median_rss_tree']:<14.1f} {stats['output']:<20}"
+        )
+
+    print("-" * 95)
+    print()
+
+    # Compute and display speedups
+    print("SPEEDUPS (GIL-on / GIL-off ratio for each executor):")
+    print()
+
+    # Threads speedup
+    threads_off = all_stats["threads+GIL-off"]["median_time"]
+    threads_on = all_stats["threads+GIL-on"]["median_time"]
+    if threads_off > 0:
+        threads_speedup = threads_on / threads_off
+        print(f"  Threads:   {threads_speedup:.2f}x", end="")
+        if threads_speedup > 1:
+            print(f" (GIL-off is {threads_speedup:.2f}x faster)")
+        elif threads_speedup < 1:
+            print(f" (GIL-on is {1/threads_speedup:.2f}x faster)")
+        else:
+            print(" (no difference)")
+
+    # Processes speedup
+    procs_off = all_stats["procs+GIL-off"]["median_time"]
+    procs_on = all_stats["procs+GIL-on"]["median_time"]
+    if procs_off > 0:
+        procs_speedup = procs_on / procs_off
+        print(f"  Processes: {procs_speedup:.2f}x", end="")
+        if procs_speedup > 1:
+            print(f" (GIL-off is {procs_speedup:.2f}x faster)")
+        elif procs_speedup < 1:
+            print(f" (GIL-on is {1/procs_speedup:.2f}x faster)")
+        else:
+            print(" (no difference)")
+
+    print()
+
+    # Memory comparison
+    print("MEMORY COMPARISON:")
+    print(f"  Threads GIL-off:   {all_stats['threads+GIL-off']['median_rss_tree']:.1f} MiB")
+    print(f"  Threads GIL-on:    {all_stats['threads+GIL-on']['median_rss_tree']:.1f} MiB")
+    print(f"  Processes GIL-off: {all_stats['procs+GIL-off']['median_rss_tree']:.1f} MiB")
+    print(f"  Processes GIL-on:  {all_stats['procs+GIL-on']['median_rss_tree']:.1f} MiB")
+
+    print()
+    print("=" * 95)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Benchmark Free-threaded vs GIL-enforced Python execution."
+    )
+    parser.add_argument("input_file", help="Path to input data file")
+    parser.add_argument(
+        "--trials", type=int, default=7, help="Number of timed trials per mode (default: 7)"
+    )
+    parser.add_argument(
+        "--warmup", type=int, default=1, help="Number of warm-up runs per mode (default: 1)"
+    )
+    parser.add_argument(
+        "--mem-sample-ms",
+        type=int,
+        default=75,
+        help="Memory sampling interval in milliseconds (default: 75)",
+    )
+    parser.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="Generate synthetic dataset if input_file doesn't exist",
+    )
+    parser.add_argument(
+        "--synthetic-groups",
+        type=int,
+        default=175000,
+        help="Number of groups for synthetic data (default: 175000)",
+    )
+    parser.add_argument(
+        "--synthetic-nodes",
+        type=int,
+        default=32,
+        help="Nodes per group for synthetic data (default: 32)",
+    )
+    parser.add_argument(
+        "--synthetic-out-degree",
+        type=int,
+        default=2,
+        help="Out-degree for synthetic data (default: 2)",
+    )
+    parser.add_argument(
+        "--executor",
+        choices=["auto", "threads", "processes"],
+        default="auto",
+        help="Force executor type: auto (GIL-based), threads, or processes (default: auto)",
+    )
+    parser.add_argument(
+        "--all-modes",
+        action="store_true",
+        help="Run full 2×2 matrix: (threads, processes) × (GIL-off, GIL-on)",
+    )
+    args = parser.parse_args()
+
+    input_file = args.input_file
+    num_trials = args.trials
+    num_warmup = args.warmup
+    mem_sample_ms = args.mem_sample_ms
+    executor_policy = args.executor
+    all_modes = args.all_modes
+
+    # Generate synthetic data if requested and file doesn't exist
+    if args.synthetic and not Path(input_file).exists():
+        generate_synthetic_if_needed(
+            input_file,
+            groups=args.synthetic_groups,
+            nodes=args.synthetic_nodes,
+            out_degree=args.synthetic_out_degree,
+        )
+
+    if not Path(input_file).exists():
+        print(f"Error: Input file not found: {input_file}", file=sys.stderr)
+        if not args.synthetic:
+            print("  Hint: Use --synthetic to auto-generate test data", file=sys.stderr)
+        sys.exit(1)
+
+    script_path = Path(__file__).parent / "my_solution.py"
+    if not script_path.exists():
+        print(f"Error: Solution script not found: {script_path}", file=sys.stderr)
+        sys.exit(1)
+
+    # Check for /usr/bin/time
+    use_timev = check_timev_available()
+
+    # Print header
+    print("=" * 95)
+    if all_modes:
+        print("GIL Benchmark: Full 2×2 Matrix (Executor × GIL)")
+    else:
+        print("GIL Benchmark: Free-threaded vs GIL-enforced")
+    print("=" * 95)
+    print(f"Input: {input_file}")
+    print(f"Trials: {num_trials} | Warm-up runs: {num_warmup}")
+    if all_modes:
+        print("Mode: All combinations (threads×GIL-off, threads×GIL-on, procs×GIL-off, procs×GIL-on)")
+    elif executor_policy == "auto":
+        print("Executor: auto (threads if GIL disabled, processes if GIL enabled)")
+    else:
+        print(f"Executor: {executor_policy} (forced via RC_EXECUTOR)")
+    print(f"Memory sampling: {mem_sample_ms}ms interval (process-tree RSS via psutil)")
+    print(f"Python: {sys.executable}")
+    print(f"Wall-clock timing: {'GNU time' if use_timev else 'time.perf_counter()'}")
+    print()
+
+    if all_modes:
+        # Run full 2×2 matrix
+        run_all_modes_benchmark(
+            script_path, input_file, use_timev, mem_sample_ms, num_trials, num_warmup
+        )
+    else:
+        # Run standard 2-mode benchmark
+        env_free: dict[str, str] = {}
+        env_gil: dict[str, str] = {"PYTHON_GIL": "1"}
+
+        if executor_policy != "auto":
+            env_free["RC_EXECUTOR"] = executor_policy
+            env_gil["RC_EXECUTOR"] = executor_policy
+
+        run_two_mode_benchmark(
+            script_path, input_file, env_free, env_gil, use_timev, mem_sample_ms,
+            num_trials, num_warmup
+        )
 
 
 if __name__ == "__main__":
