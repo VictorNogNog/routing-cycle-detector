@@ -269,7 +269,7 @@ Input: data/large_input_v1.txt
 Trials: 16 | Warm-up runs: 1
 Mode: All combinations (threads×GIL-off, threads×GIL-on, procs×GIL-off, procs×GIL-on)
 Memory sampling: 75ms interval (process-tree RSS via psutil)
-Python: .../my-solution-benchmark-gil-bfd3788b0a2e0e6a/bin/python3
+Python: <python3>
 Wall-clock timing: GNU time
 
 Warming up (1 run(s) per mode, not counted)...
@@ -315,7 +315,7 @@ Input: data/synth_11m_nodes10_od2.txt
 Trials: 16 | Warm-up runs: 1
 Mode: All combinations (threads×GIL-off, threads×GIL-on, procs×GIL-off, procs×GIL-on)
 Memory sampling: 75ms interval (process-tree RSS via psutil)
-Python: <HOME>/.cache/uv/environments-v2/my-solution-benchmark-gil-bfd3788b0a2e0e6a/bin/python3
+Python: <python3>
 Wall-clock timing: GNU time
 
 Warming up (1 run(s) per mode, not counted)...
