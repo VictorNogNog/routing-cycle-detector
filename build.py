@@ -18,7 +18,7 @@ from pathlib import Path
 SHEBANG = "#!/usr/bin/env -S uv run --script"
 SCRIPT_METADATA = """\
 # /// script
-# requires-python = ">=3.10+"
+# requires-python = ">=3.10"
 # dependencies = []
 # ///
 """
