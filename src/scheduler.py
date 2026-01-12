@@ -32,8 +32,10 @@ def _get_executor_class():
     Select the appropriate executor.
 
     Priority:
-    1. RC_EXECUTOR env var override ("threads" or "processes")
+    1. RC_EXECUTOR env var override ("threads", "processes", or "serial")
     2. Auto-select based on GIL status (disabled -> threads, enabled -> processes)
+
+    "serial" mode runs in the main thread - useful for debugging with breakpoints.
     """
     executor_override = os.environ.get(RC_EXECUTOR_ENV, "").lower()
 
@@ -41,6 +43,8 @@ def _get_executor_class():
         return ThreadPoolExecutor
     elif executor_override == "processes":
         return ProcessPoolExecutor
+    elif executor_override == "serial":
+        return None  # Signal to use serial execution
     else:
         if _is_gil_enabled():
             return ProcessPoolExecutor
@@ -78,10 +82,12 @@ def solve(
     # Select executor based on GIL status
     ExecutorClass = _get_executor_class()
     use_process_pool = ExecutorClass is ProcessPoolExecutor
+    use_serial = ExecutorClass is None
 
     gil_status = "enabled" if _is_gil_enabled() else "disabled"
     logger.debug("GIL status: %s", gil_status)
-    logger.debug("Using executor: %s", ExecutorClass.__name__)
+    executor_name = "serial" if use_serial else ExecutorClass.__name__
+    logger.debug("Using executor: %s", executor_name)
 
     # Create temporary directory for buckets
     tmp_dir = tempfile.mkdtemp(prefix="routing_cycles_")
@@ -109,18 +115,9 @@ def solve(
         # Best result: (claim_id_bytes, status_bytes, cycle_len)
         best_result: tuple[bytes, bytes, int] | None = None
 
-        with ExecutorClass(max_workers=workers) as executor:
-            if use_process_pool:
-                # Use chunksize to reduce IPC overhead
-                results = executor.map(
-                    process_bucket,
-                    bucket_path_strs,
-                    chunksize=PROCESS_POOL_CHUNKSIZE,
-                )
-            else:
-                # ThreadPoolExecutor - chunksize not as critical
-                results = executor.map(process_bucket, bucket_path_strs)
-
+        def process_results(results):
+            """Process results iterator and track best result."""
+            nonlocal best_result
             for result in results:
                 if result is not None:
                     if best_result is None or result[2] > best_result[2]:
@@ -128,6 +125,25 @@ def solve(
                         claim_id = result[0].decode("utf-8")
                         status = result[1].decode("utf-8")
                         logger.debug("  New best: %s,%s,%d", claim_id, status, result[2])
+
+        if use_serial:
+            # Serial mode: process in main thread (for debugging)
+            results = (process_bucket(p) for p in bucket_path_strs)
+            process_results(results)
+        else:
+            with ExecutorClass(max_workers=workers) as executor:
+                if use_process_pool:
+                    # Use chunksize to reduce IPC overhead
+                    results = executor.map(
+                        process_bucket,
+                        bucket_path_strs,
+                        chunksize=PROCESS_POOL_CHUNKSIZE,
+                    )
+                else:
+                    # ThreadPoolExecutor - chunksize not as critical
+                    results = executor.map(process_bucket, bucket_path_strs)
+
+                process_results(results)
 
         t2_end = time.perf_counter()
 

@@ -2,13 +2,26 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Solution: Small debug (serial)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.main",
+            "args": ["data/debug_small.txt", "--log-level", "DEBUG"],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "RC_EXECUTOR": "serial"
+            }
+        },
+        {
             "name": "Solution: DEBUG mode",
             "type": "debugpy",
             "request": "launch",
             "module": "src.main",
             "args": ["data/large_input_v1.txt", "--log-level", "DEBUG"],
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": false,
+            "subProcess": true
         },
         {
             "name": "Solution: Default (WARNING)",
@@ -17,7 +30,8 @@
             "module": "src.main",
             "args": ["data/large_input_v1.txt"],
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": false,
+            "subProcess": true
         },
         {
             "name": "Solution: Synthetic data",
@@ -26,7 +40,8 @@
             "module": "src.main",
             "args": ["data/synth_fast_3p5m.txt", "--log-level", "DEBUG"],
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": false,
+            "subProcess": true
         },
         {
             "name": "Benchmark: Quick test",
@@ -35,7 +50,8 @@
             "program": "${workspaceFolder}/my_solution_benchmark_gil.py",
             "args": ["data/synth_fast_3p5m.txt", "--trials", "2"],
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": false,
+            "subProcess": true
         },
         {
             "name": "Benchmark: All modes",
@@ -44,7 +60,8 @@
             "program": "${workspaceFolder}/my_solution_benchmark_gil.py",
             "args": ["data/synth_fast_3p5m.txt", "--all-modes", "--trials", "2"],
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": false,
+            "subProcess": true
         },
         {
             "name": "Generate synthetic data",
@@ -53,7 +70,8 @@
             "program": "${workspaceFolder}/generate_synthetic_cycles.py",
             "args": ["--out", "data/test_synthetic.txt", "--groups", "1000", "--log-level", "INFO"],
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": false,
+            "subProcess": true
         },
         {
             "name": "Current file",
@@ -61,7 +79,8 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": false,
+            "subProcess": true
         }
     ]
 }
