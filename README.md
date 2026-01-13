@@ -407,17 +407,16 @@ This solution requires **Python 3.14+** for free-threading support. It will run 
 
 ```
 routing-cycle-detector/
-├── my_solution.py                    # Main standalone solution (PEP 723)
+├── my_solution.py                    # Main entry point (PEP 723, imports from src/)
 ├── my_solution_benchmark_gil.py      # Benchmark script
 ├── generate_synthetic_cycles.py      # Synthetic dataset generator
-├── build.py                          # Bundles src/ into my_solution.py
 ├── solution.txt                      # Output from running on challenge data
 ├── explanation.txt                   # Brief algorithm summary
 ├── src/
 │   ├── partition.py                  # Pass 1: Bucketing with LRU cache
 │   ├── graph.py                      # Pass 2: Cycle detection
 │   ├── scheduler.py                  # Orchestration and parallelism
-│   └── main.py                       # CLI entry point
+│   └── main.py                       # Alternate entry point (python -m src.main)
 ├── tests/
 │   ├── test_partition.py
 │   └── test_graph.py
