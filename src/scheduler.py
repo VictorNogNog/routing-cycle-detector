@@ -7,8 +7,8 @@ import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
-from .graph import process_bucket
-from .partition import partition_to_buckets
+from src.graph import process_bucket
+from src.partition import PartitionStats, partition_to_buckets
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,9 @@ def solve(
     Returns:
         Tuple of (claim_id, status_code, cycle_length) or None if no cycles.
     """
-    input_path = str(Path(input_path).resolve())
+    total_start = time.perf_counter()
+    input_file = Path(input_path)
+    input_path = str(input_file.resolve())
 
     # Validate buckets is power of 2
     if buckets & (buckets - 1) != 0:
@@ -85,34 +87,47 @@ def solve(
     use_serial = ExecutorClass is None
 
     gil_status = "enabled" if _is_gil_enabled() else "disabled"
-    logger.debug("GIL status: %s", gil_status)
-    executor_name = "serial" if use_serial else ExecutorClass.__name__
-    logger.debug("Using executor: %s", executor_name)
+    executor_name = "serial" if use_serial else ("threads" if ExecutorClass is ThreadPoolExecutor else "processes")
+    workers_desc = "auto" if workers is None else str(workers)
+    executor_override = os.environ.get(RC_EXECUTOR_ENV, "")
+    override_info = f", RC_EXECUTOR={executor_override}" if executor_override else ""
+
+    logger.info(
+        f"Starting: file={input_file.name}, buckets={buckets}, workers={workers_desc}, "
+        f"executor={executor_name}, GIL={gil_status}{override_info}"
+    )
 
     # Create temporary directory for buckets
     tmp_dir = tempfile.mkdtemp(prefix="routing_cycles_")
 
     try:
         # Pass 1: Partition to buckets
-        logger.debug("Pass 1: Partitioning to %d buckets...", buckets)
         t1_start = time.perf_counter()
 
-        bucket_paths = partition_to_buckets(input_path, buckets, tmp_dir)
+        bucket_paths, stats = partition_to_buckets(input_path, buckets, tmp_dir)
 
         t1_end = time.perf_counter()
-        logger.debug("  Created %d non-empty buckets", len(bucket_paths))
+        t1 = t1_end - t1_start
+
+        if stats.malformed_lines > 0:
+            logger.warning(
+                "Pass 1: %d malformed lines skipped (read=%d, written=%d)",
+                stats.malformed_lines, stats.lines_read, stats.lines_written
+            )
+
+        logger.info(f"Pass 1 done: {len(bucket_paths)} non-empty buckets in {t1:.2f}s")
 
         if not bucket_paths:
+            total_time = time.perf_counter() - total_start
+            logger.info(f"Result: No cycles found (total {total_time:.2f}s)")
             return None
 
         # Pass 2: Process buckets in parallel using executor.map
-        logger.debug("Pass 2: Processing buckets...")
         t2_start = time.perf_counter()
 
         # Convert Path objects to strings for pickling (ProcessPoolExecutor)
         bucket_path_strs = [str(p) for p in bucket_paths]
 
-        # Best result: (claim_id_bytes, status_bytes, cycle_len)
         best_result: tuple[bytes, bytes, int] | None = None
 
         def process_results(results):
@@ -124,50 +139,49 @@ def solve(
                         best_result = result
                         claim_id = result[0].decode("utf-8")
                         status = result[1].decode("utf-8")
-                        logger.debug("  New best: %s,%s,%d", claim_id, status, result[2])
+                        logger.debug("New best: %s,%s,%d", claim_id, status, result[2])
 
         if use_serial:
-            # Serial mode: process in main thread (for debugging)
             results = (process_bucket(p) for p in bucket_path_strs)
             process_results(results)
         else:
             with ExecutorClass(max_workers=workers) as executor:
                 if use_process_pool:
-                    # Use chunksize to reduce IPC overhead
                     results = executor.map(
                         process_bucket,
                         bucket_path_strs,
                         chunksize=PROCESS_POOL_CHUNKSIZE,
                     )
                 else:
-                    # ThreadPoolExecutor - chunksize not as critical
                     results = executor.map(process_bucket, bucket_path_strs)
 
                 process_results(results)
 
         t2_end = time.perf_counter()
-
-        # Log phase timing summary
-        t1 = t1_end - t1_start
         t2 = t2_end - t2_start
-        total = t1 + t2
-        if total > 0:
+
+        logger.info(f"Pass 2 done: {len(bucket_paths)} buckets processed in {t2:.2f}s")
+
+        total_passes = t1 + t2
+        if total_passes > 0:
             logger.debug(
-                "Timing: Pass1=%.2fs (%.0f%%), Pass2=%.2fs (%.0f%%), Total=%.2fs",
-                t1, 100 * t1 / total, t2, 100 * t2 / total, total
+                "Timing breakdown: Pass1=%.2fs (%.0f%%), Pass2=%.2fs (%.0f%%)",
+                t1, 100 * t1 / total_passes, t2, 100 * t2 / total_passes
             )
 
-        # Decode bytes to strings for final result
+        total_time = time.perf_counter() - total_start
+
         if best_result is not None:
-            return (
-                best_result[0].decode("utf-8"),
-                best_result[1].decode("utf-8"),
-                best_result[2],
-            )
-        return None
+            claim_id = best_result[0].decode("utf-8")
+            status = best_result[1].decode("utf-8")
+            cycle_len = best_result[2]
+            logger.info(f"Result: cycle length {cycle_len} (total {total_time:.2f}s)")
+            return (claim_id, status, cycle_len)
+        else:
+            logger.info(f"Result: No cycles found (total {total_time:.2f}s)")
+            return None
 
     finally:
-        # Cleanup temporary directory
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
