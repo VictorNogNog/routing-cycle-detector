@@ -4,17 +4,12 @@
 # dependencies = []
 # ///
 """
-Routing Cycle Detector - Find the longest routing cycle in claim data.
+Routing Cycle Detector - Find the longest directed cycle in routing claim data.
 
-Two-pass streaming algorithm:
-  Pass 1: Partition input by (claim_id, status_code) hash to temporary bucket files
-  Pass 2: Process buckets in parallel to find cycles, reduce to global max
-
-Usage:
-  ./my_solution.py data/large_input_v1.txt
-  ./my_solution.py data/large_input_v1.txt --log-level DEBUG
-  ./my_solution.py data/large_input_v1.txt --buckets 2048
+This is the main entry point for the solution. It uses the modules in src/ for
+partitioning, graph processing, and parallel scheduling.
 """
+
 import argparse
 import logging
 import sys
@@ -22,7 +17,7 @@ import sys
 from src.scheduler import main_solve
 
 
-def configure_logging(level: int = logging.WARNING) -> None:
+def configure_logging(level: int = logging.INFO) -> None:
     """Configure logging to write to stderr."""
     logging.basicConfig(
         level=level,
@@ -34,7 +29,7 @@ def configure_logging(level: int = logging.WARNING) -> None:
 def create_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(
-        prog="my_solution.py",
+        prog="routing-cycle-detector",
         description="Find the longest routing cycle in claim data.",
     )
 
@@ -53,8 +48,8 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="WARNING",
-        help="Logging level (default: WARNING)",
+        default="INFO",
+        help="Logging level (default: INFO)",
     )
 
     return parser

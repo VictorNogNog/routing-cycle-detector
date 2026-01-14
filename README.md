@@ -61,6 +61,39 @@ After all buckets complete, reduce results to find the global maximum cycle.
 - **Streaming I/O:** Never load the entire input file into memory
 - **Cache-friendly:** CRC32 hashing groups related data together
 
+### End-to-End Pipeline
+
+```mermaid
+flowchart TD
+    %% High contrast styling
+    classDef storage fill:#ffffff,stroke:#000000,stroke-width:2px,color:#000000;
+    classDef process fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000000;
+    classDef decision fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#000000;
+
+    subgraph Phase1 ["Phase 1: Sequential Partitioning"]
+        Input["Input File"]:::storage --> ParseAndHash["Extract & Hash ClaimID + Status"]:::process
+        ParseAndHash --> BucketIndex["Determine Bucket Index"]:::process
+        BucketIndex --> DiskBuckets["Write to Disk bucket_0000.bin ..."]:::storage
+    end
+
+    subgraph Phase2 ["Phase 2: Parallel Analysis"]
+        DiskBuckets --> Scheduler{"Scheduler Process/Thread Pool"}:::decision
+        
+        subgraph WorkerLogic ["Per-Bucket Processing"]
+            Scheduler -->|Map Bucket Paths| BuildGraph["Build Adjacency List Group by ClaimID + Status"]:::process
+            BuildGraph --> CheckType{"Is Functional Graph? Max Out-Degree <= 1"}:::decision
+            
+            CheckType -- Yes --> AlgoFunctional["Algorithm A: Linear Walk O N Traversal with Path Tracking"]:::process
+            CheckType -- No --> AlgoDFS["Algorithm B: DFS Backtracking Sort Nodes and Skip Lower Indices"]:::process
+            
+            AlgoFunctional --> LocalMax["Identify Longest Cycle in Bucket"]:::process
+            AlgoDFS --> LocalMax
+        end
+    end
+
+    LocalMax --> Output["Reduce & output Global Max ClaimID, Status, Length"]:::storage
+```
+
 ---
 
 ## Implementation Details
@@ -71,12 +104,7 @@ The partitioner uses an **LRU (Least Recently Used) cache** that keeps at most `
 
 ### Bytes-First Parsing
 
-All parsing stays in bytes until the final output to avoid UTF-8 decode overhead on millions of lines:
-
-- Use `line.rstrip(b"\n\r")` instead of `strip()` (faster, targeted)
-- Use `line.split(b"|", 3)` with maxsplit to avoid allocating extra parts
-- Store graph keys as `(claim_bytes, status_bytes)` tuples
-- Only decode the winning result for final CSV output
+All parsing stays in bytes until the final output to avoid UTF-8 decode overhead on millions of lines. Only the winning result is decoded for final CSV output.
 
 ### Graph Building: Deduplicated Adjacency Sets
 
@@ -142,45 +170,6 @@ When using `ProcessPoolExecutor`, we use `executor.map(..., chunksize=16)` to re
 - **Memory-mapped I/O:** Could improve read performance for Pass 2
 - **Faster hashing:** xxHash could replace CRC32 for marginal speedup
 - **Progress metrics:** Add estimated completion time for very long runs
-
----
-
-## Diagrams
-
-### End-to-End Pipeline
-
-Overview of the complete two-pass architecture from input to output:
-
-```mermaid
-flowchart TD
-    %% High contrast styling
-    classDef storage fill:#ffffff,stroke:#000000,stroke-width:2px,color:#000000;
-    classDef process fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000000;
-    classDef decision fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#000000;
-
-    subgraph Phase1 ["Phase 1: Sequential Partitioning"]
-        Input["Input File"]:::storage --> ParseAndHash["Extract & Hash ClaimID + Status"]:::process
-        ParseAndHash --> BucketIndex["Determine Bucket Index"]:::process
-        BucketIndex --> DiskBuckets["Write to Disk bucket_0000.bin ..."]:::storage
-    end
-
-    subgraph Phase2 ["Phase 2: Parallel Analysis"]
-        DiskBuckets --> Scheduler{"Scheduler Process/Thread Pool"}:::decision
-        
-        subgraph WorkerLogic ["Per-Bucket Processing"]
-            Scheduler -->|Map Bucket Paths| BuildGraph["Build Adjacency List Group by ClaimID + Status"]:::process
-            BuildGraph --> CheckType{"Is Functional Graph? Max Out-Degree <= 1"}:::decision
-            
-            CheckType -- Yes --> AlgoFunctional["Algorithm A: Linear Walk O N Traversal with Path Tracking"]:::process
-            CheckType -- No --> AlgoDFS["Algorithm B: DFS Backtracking Sort Nodes and Skip Lower Indices"]:::process
-            
-            AlgoFunctional --> LocalMax["Identify Longest Cycle in Bucket"]:::process
-            AlgoDFS --> LocalMax
-        end
-    end
-
-    LocalMax --> Output["Reduce & output Global Max ClaimID, Status, Length"]:::storage
-```
 
 ---
 
@@ -407,7 +396,7 @@ This solution requires **Python 3.14+** for free-threading support. It will run 
 
 ```
 routing-cycle-detector/
-├── my_solution.py                    # Main entry point (PEP 723, imports from src/)
+├── my_solution.py                    # Main entry point (PEP 723 script)
 ├── my_solution_benchmark_gil.py      # Benchmark script
 ├── generate_synthetic_cycles.py      # Synthetic dataset generator
 ├── solution.txt                      # Output from running on challenge data
@@ -415,8 +404,7 @@ routing-cycle-detector/
 ├── src/
 │   ├── partition.py                  # Pass 1: Bucketing with LRU cache
 │   ├── graph.py                      # Pass 2: Cycle detection
-│   ├── scheduler.py                  # Orchestration and parallelism
-│   └── main.py                       # Alternate entry point (python -m src.main)
+│   └── scheduler.py                  # Orchestration and parallelism
 ├── tests/
 │   ├── test_partition.py
 │   └── test_graph.py
@@ -426,5 +414,4 @@ routing-cycle-detector/
     ├── End-to-End Pipeline.md
     └── Sequence Diagram.md
 ```
-
 ---
