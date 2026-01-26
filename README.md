@@ -22,7 +22,7 @@ python3 my_solution.py data/large_input_v1.txt
 
 **Output behavior:**
 - Exactly one CSV line printed to **stdout**: `<claim_id>,<status_code>,<cycle_length>`
-- Progress and diagnostic messages go to **stderr** (only when `--verbose` is used)
+- Progress messages (INFO level) go to **stderr** by default
 
 ### CLI Options
 
@@ -33,7 +33,7 @@ python3 my_solution.py data/large_input_v1.txt
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--buckets` | 1024 | Number of partition buckets (must be power of 2) |
-| `--log-level` | WARNING | Choices: DEBUG, INFO, WARNING, ERROR |
+| `--log-level` | INFO | Choices: DEBUG, INFO, WARNING, ERROR |
 
 ---
 

@@ -1,4 +1,5 @@
-Two-pass stream: partition lines into CRC32 buckets by (claim,status) to bound memory. 
-Buckets processed in parallel (threads if free-threaded, else processes), building deduped byte-key adjacency. 
-Use O(n) functional-graph cycle finder when outdegree<=1, else DFS with min-start rule.
-Future: tune bucket count/chunksize, faster I/O, spill oversized groups.
+Finds longest directed cycle per (claim,status) group in routing data.
+Two-pass: partition lines by CRC32 hash into buckets to bound memory.
+Buckets processed in parallel (threads if GIL-free, else processes), building adjacency sets.
+O(n) cycle detection when outdegree<=1; else DFS from lexicographically smallest node.
+Output: claim_id,status,length
