@@ -1,12 +1,7 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.10"
-# dependencies = ["psutil"]
-# ///
 """
-Benchmark script comparing Free-threaded vs GIL-enforced execution.
+GIL benchmark comparing Free-threaded vs GIL-enforced execution.
 
-Runs my_solution.py under various conditions with multiple trials,
+Runs the routing cycle detector under various conditions with multiple trials,
 measures wall-clock time and peak RSS (process tree), and reports statistical summary.
 
 Supports:
@@ -15,6 +10,9 @@ Supports:
 
 Uses psutil to track memory across the entire process tree (parent + all children),
 which is essential for accurate measurement when ProcessPoolExecutor is used.
+
+Note: This module requires the 'benchmark' optional dependency:
+    uv pip install -e ".[benchmark]"
 """
 
 import argparse
@@ -28,16 +26,20 @@ import time
 from pathlib import Path
 from statistics import median
 
-# Check for psutil early
 try:
     import psutil
 except ImportError:
-    sys.stderr.write("ERROR: psutil is required for process-tree memory benchmarking.\n")
-    sys.stderr.write("Install with: pip install psutil\n")
-    sys.stderr.write("Or if using uv: uv pip install psutil\n")
-    sys.exit(1)
+    psutil = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+
+def _check_psutil() -> None:
+    """Check that psutil is available, exit with helpful message if not."""
+    if psutil is None:
+        sys.stderr.write("ERROR: psutil is required for process-tree memory benchmarking.\n")
+        sys.stderr.write("Install with: uv pip install -e '.[benchmark]'\n")
+        sys.exit(1)
 
 
 def parse_elapsed_to_seconds(elapsed_str: str) -> float:
@@ -118,6 +120,7 @@ def measure_peak_rss_tree(
     Returns:
         Peak total RSS in bytes across the process tree.
     """
+    _check_psutil()
     peak_bytes = 0
 
     try:
@@ -174,7 +177,6 @@ def measure_peak_rss_tree(
 
 
 def run_benchmark(
-    script_path: Path,
     input_file: str,
     env_overrides: dict[str, str],
     use_timev: bool,
@@ -182,13 +184,12 @@ def run_benchmark(
     mode_label: str = "",
 ) -> dict:
     """
-    Run my_solution.py and capture timing and memory metrics.
+    Run the routing cycle detector and capture timing and memory metrics.
 
     Uses subprocess.Popen to allow memory sampling during execution.
     Tracks peak RSS across the entire process tree using psutil.
 
     Args:
-        script_path: Path to my_solution.py.
         input_file: Path to input data file.
         env_overrides: Environment variable overrides.
         use_timev: If True, wrap with /usr/bin/time -v for wall-clock timing.
@@ -198,6 +199,7 @@ def run_benchmark(
     Returns:
         Dict with keys: mode, seconds, peak_rss_tree_mib, timev_rss_mib, output.
     """
+    _check_psutil()
     env = os.environ.copy()
     env.update(env_overrides)
 
@@ -205,11 +207,11 @@ def run_benchmark(
         mode_label = "GIL-enforced" if env_overrides.get("PYTHON_GIL") == "1" else "Free-threaded"
     poll_interval_s = mem_sample_ms / 1000.0
 
-    # Build command
+    # Build command - run as module
     if use_timev:
-        cmd = ["/usr/bin/time", "-v", sys.executable, str(script_path), input_file]
+        cmd = ["/usr/bin/time", "-v", sys.executable, "-m", "routing_cycle_detector", input_file]
     else:
-        cmd = [sys.executable, str(script_path), input_file]
+        cmd = [sys.executable, "-m", "routing_cycle_detector", input_file]
 
     # Start process
     start_time = time.perf_counter()
@@ -272,7 +274,7 @@ def generate_synthetic_if_needed(
         logger.info("Synthetic file already exists: %s", output_path)
         return
 
-    generator_path = Path(__file__).parent / "generate_synthetic_cycles.py"
+    generator_path = Path(__file__).parent.parent.parent.parent / "generate_synthetic_cycles.py"
     if not generator_path.exists():
         logger.error("Generator script not found: %s", generator_path)
         sys.exit(1)
@@ -310,7 +312,6 @@ def compute_stats(results: list[dict]) -> dict:
 
 
 def run_two_mode_benchmark(
-    script_path: Path,
     input_file: str,
     env_free: dict[str, str],
     env_gil: dict[str, str],
@@ -323,8 +324,8 @@ def run_two_mode_benchmark(
     # Warm-up runs (not counted)
     logger.info("Warming up (%d run(s) per mode, not counted)...", num_warmup)
     for _ in range(num_warmup):
-        run_benchmark(script_path, input_file, env_free, use_timev, mem_sample_ms)
-        run_benchmark(script_path, input_file, env_gil, use_timev, mem_sample_ms)
+        run_benchmark(input_file, env_free, use_timev, mem_sample_ms)
+        run_benchmark(input_file, env_gil, use_timev, mem_sample_ms)
     logger.info("Warm-up complete.")
     logger.info("")
 
@@ -336,12 +337,12 @@ def run_two_mode_benchmark(
     for trial in range(1, num_trials + 1):
         if trial % 2 == 1:
             # Odd trial: free-threaded first
-            r1 = run_benchmark(script_path, input_file, env_free, use_timev, mem_sample_ms)
-            r2 = run_benchmark(script_path, input_file, env_gil, use_timev, mem_sample_ms)
+            r1 = run_benchmark(input_file, env_free, use_timev, mem_sample_ms)
+            r2 = run_benchmark(input_file, env_gil, use_timev, mem_sample_ms)
         else:
             # Even trial: GIL-enforced first
-            r2 = run_benchmark(script_path, input_file, env_gil, use_timev, mem_sample_ms)
-            r1 = run_benchmark(script_path, input_file, env_free, use_timev, mem_sample_ms)
+            r2 = run_benchmark(input_file, env_gil, use_timev, mem_sample_ms)
+            r1 = run_benchmark(input_file, env_free, use_timev, mem_sample_ms)
 
         results_free.append(r1)
         results_gil.append(r2)
@@ -427,7 +428,6 @@ def run_two_mode_benchmark(
 
 
 def run_all_modes_benchmark(
-    script_path: Path,
     input_file: str,
     use_timev: bool,
     mem_sample_ms: int,
@@ -454,7 +454,7 @@ def run_all_modes_benchmark(
     for _ in range(num_warmup):
         for cfg in configs:
             run_benchmark(
-                script_path, input_file, make_env(cfg), use_timev, mem_sample_ms, cfg["label"]
+                input_file, make_env(cfg), use_timev, mem_sample_ms, cfg["label"]
             )
     logger.info("Warm-up complete.")
     logger.info("")
@@ -472,7 +472,7 @@ def run_all_modes_benchmark(
         trial_results = {}
         for cfg in order:
             r = run_benchmark(
-                script_path, input_file, make_env(cfg), use_timev, mem_sample_ms, cfg["label"]
+                input_file, make_env(cfg), use_timev, mem_sample_ms, cfg["label"]
             )
             results[cfg["label"]].append(r)
             trial_results[cfg["label"]] = r
@@ -570,7 +570,10 @@ def run_all_modes_benchmark(
     logger.info("=" * 95)
 
 
-def main() -> None:
+def main() -> int:
+    """Entry point for benchmark CLI."""
+    _check_psutil()
+
     parser = argparse.ArgumentParser(
         description="Benchmark Free-threaded vs GIL-enforced Python execution."
     )
@@ -657,12 +660,7 @@ def main() -> None:
         logger.error("Input file not found: %s", input_file)
         if not args.synthetic:
             logger.error("  Hint: Use --synthetic to auto-generate test data")
-        sys.exit(1)
-
-    script_path = Path(__file__).parent / "my_solution.py"
-    if not script_path.exists():
-        logger.error("Solution script not found: %s", script_path)
-        sys.exit(1)
+        return 1
 
     # Check for /usr/bin/time
     use_timev = check_timev_available()
@@ -690,7 +688,7 @@ def main() -> None:
     if all_modes:
         # Run full 2×2 matrix
         run_all_modes_benchmark(
-            script_path, input_file, use_timev, mem_sample_ms, num_trials, num_warmup
+            input_file, use_timev, mem_sample_ms, num_trials, num_warmup
         )
     else:
         # Run standard 2-mode benchmark
@@ -702,10 +700,12 @@ def main() -> None:
             env_gil["RC_EXECUTOR"] = executor_policy
 
         run_two_mode_benchmark(
-            script_path, input_file, env_free, env_gil, use_timev, mem_sample_ms,
+            input_file, env_free, env_gil, use_timev, mem_sample_ms,
             num_trials, num_warmup
         )
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

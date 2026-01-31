@@ -1,20 +1,10 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.10"
-# dependencies = []
-# ///
-"""
-Routing Cycle Detector - Find the longest directed cycle in routing claim data.
-
-This is the main entry point for the solution. It uses the modules in src/ for
-partitioning, graph processing, and parallel scheduling.
-"""
+"""Command-line interface for routing cycle detector."""
 
 import argparse
 import logging
 import sys
 
-from src.scheduler import main_solve
+from routing_cycle_detector.scheduler import main_solve
 
 
 def configure_logging(level: int = logging.INFO) -> None:
@@ -55,8 +45,8 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
-    """Main entry point."""
+def main() -> int:
+    """Entry point for CLI."""
     parser = create_parser()
     args = parser.parse_args()
 
@@ -73,6 +63,8 @@ def main() -> None:
         buckets=args.buckets,
     )
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
