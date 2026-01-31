@@ -7,8 +7,8 @@ import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
-from src.graph import process_bucket
-from src.partition import PartitionStats, partition_to_buckets
+from routing_cycle_detector.graph import process_bucket
+from routing_cycle_detector.partition import partition_to_buckets
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def _get_executor_class():
     elif executor_override == "processes":
         return ProcessPoolExecutor
     elif executor_override == "serial":
-        return None  # Signal to use serial execution
+        return None
     else:
         if _is_gil_enabled():
             return ProcessPoolExecutor
@@ -87,7 +87,11 @@ def solve(
     use_serial = ExecutorClass is None
 
     gil_status = "enabled" if _is_gil_enabled() else "disabled"
-    executor_name = "serial" if use_serial else ("threads" if ExecutorClass is ThreadPoolExecutor else "processes")
+    executor_name = (
+        "serial"
+        if use_serial
+        else ("threads" if ExecutorClass is ThreadPoolExecutor else "processes")
+    )
     workers_desc = "auto" if workers is None else str(workers)
     executor_override = os.environ.get(RC_EXECUTOR_ENV, "")
     override_info = f", RC_EXECUTOR={executor_override}" if executor_override else ""
@@ -112,7 +116,9 @@ def solve(
         if stats.malformed_lines > 0:
             logger.warning(
                 "Pass 1: %d malformed lines skipped (read=%d, written=%d)",
-                stats.malformed_lines, stats.lines_read, stats.lines_written
+                stats.malformed_lines,
+                stats.lines_read,
+                stats.lines_written,
             )
 
         logger.info(f"Pass 1 done: {len(bucket_paths)} non-empty buckets in {t1:.2f}s")
@@ -166,7 +172,10 @@ def solve(
         if total_passes > 0:
             logger.debug(
                 "Timing breakdown: Pass1=%.2fs (%.0f%%), Pass2=%.2fs (%.0f%%)",
-                t1, 100 * t1 / total_passes, t2, 100 * t2 / total_passes
+                t1,
+                100 * t1 / total_passes,
+                t2,
+                100 * t2 / total_passes,
             )
 
         total_time = time.perf_counter() - total_start
