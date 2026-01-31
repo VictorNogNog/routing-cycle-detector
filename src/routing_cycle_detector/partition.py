@@ -23,9 +23,6 @@ MAX_OPEN_HANDLES = 128
 class LRUFileCache:
     """
     LRU cache for file handles to prevent file descriptor exhaustion.
-
-    Keeps at most MAX_OPEN_HANDLES files open, evicting least-recently-used
-    handles when the limit is exceeded.
     """
 
     def __init__(self, max_handles: int, tmp_dir: Path):

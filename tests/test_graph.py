@@ -3,7 +3,7 @@
 import tempfile
 from pathlib import Path
 
-from src.graph import process_bucket, _find_longest_cycle, _find_cycle_functional
+from routing_cycle_detector.graph import _find_cycle_functional, _find_longest_cycle, process_bucket
 
 
 class TestProcessBucket:

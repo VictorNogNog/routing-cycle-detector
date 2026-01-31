@@ -4,7 +4,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-from src.partition import partition_to_buckets, LRUFileCache
+from routing_cycle_detector.partition import LRUFileCache, partition_to_buckets
 
 
 class TestPartitionToBuckets:
@@ -22,7 +22,7 @@ class TestPartitionToBuckets:
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             try:
-                bucket_paths = partition_to_buckets(input_path, 4, tmp_dir)
+                bucket_paths, _stats = partition_to_buckets(input_path, 4, tmp_dir)
 
                 assert len(bucket_paths) > 0
 
@@ -60,7 +60,7 @@ class TestPartitionToBuckets:
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             try:
-                bucket_paths = partition_to_buckets(input_path, 4, tmp_dir)
+                bucket_paths, _stats = partition_to_buckets(input_path, 4, tmp_dir)
 
                 total_lines = 0
                 for bucket_path in bucket_paths:
@@ -82,7 +82,7 @@ class TestPartitionToBuckets:
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             try:
-                bucket_paths = partition_to_buckets(input_path, 1024, tmp_dir)
+                bucket_paths, _stats = partition_to_buckets(input_path, 1024, tmp_dir)
 
                 assert len(bucket_paths) == 1
 
@@ -105,7 +105,7 @@ class TestPartitionToBuckets:
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             try:
-                bucket_paths = partition_to_buckets(input_path, 4, tmp_dir)
+                bucket_paths, _stats = partition_to_buckets(input_path, 4, tmp_dir)
 
                 with open(bucket_paths[0], "rb") as bf:
                     content = bf.read().decode("utf-8").strip()
