@@ -8,16 +8,24 @@ A high-performance CLI tool for finding the longest directed cycle in large rout
 
 ---
 
-## Quickstart
-
-The solution is a standalone PEP 723 script that can be executed directly:
+## Installation
 
 ```bash
-# Direct execution (requires executable permission)
-./my_solution.py data/large_input_v1.txt
+# Install the package in development mode
+uv pip install -e .
 
-# Via Python interpreter
-python3 my_solution.py data/large_input_v1.txt
+# Or with benchmark support (includes psutil for memory profiling)
+uv pip install -e ".[benchmark]"
+```
+
+## Quickstart
+
+```bash
+# Via console script (after installation)
+routing-cycle-detector data/large_input_v1.txt
+
+# Via Python module
+python -m routing_cycle_detector data/large_input_v1.txt
 ```
 
 **Output behavior:**
@@ -27,7 +35,7 @@ python3 my_solution.py data/large_input_v1.txt
 ### CLI Options
 
 ```bash
-./my_solution.py <input_file> [--buckets N] [--log-level {DEBUG,INFO,WARNING,ERROR}]
+routing-cycle-detector <input_file> [--buckets N] [--log-level {DEBUG,INFO,WARNING,ERROR}]
 ```
 
 | Option | Default | Description |
@@ -78,14 +86,14 @@ flowchart TD
 
     subgraph Phase2 ["Phase 2: Parallel Analysis"]
         DiskBuckets --> Scheduler{"Scheduler Process/Thread Pool"}:::decision
-        
+
         subgraph WorkerLogic ["Per-Bucket Processing"]
             Scheduler -->|Map Bucket Paths| BuildGraph["Build Adjacency List Group by ClaimID + Status"]:::process
             BuildGraph --> CheckType{"Is Functional Graph? Max Out-Degree <= 1"}:::decision
-            
+
             CheckType -- Yes --> AlgoFunctional["Algorithm A: Linear Walk O N Traversal with Path Tracking"]:::process
             CheckType -- No --> AlgoDFS["Algorithm B: DFS Backtracking Sort Nodes and Skip Lower Indices"]:::process
-            
+
             AlgoFunctional --> LocalMax["Identify Longest Cycle in Bucket"]:::process
             AlgoDFS --> LocalMax
         end
@@ -175,9 +183,16 @@ When using `ProcessPoolExecutor`, we use `executor.map(..., chunksize=16)` to re
 
 ## Benchmarking
 
+The benchmark CLI requires the `benchmark` optional dependency:
+
+```bash
+# Install with benchmark support
+uv pip install -e ".[benchmark]"
+```
+
 ### Methodology
 
-The benchmark script `my_solution_benchmark_gil.py` provides a rigorous comparison of execution modes:
+The benchmark command provides a rigorous comparison of execution modes:
 
 - **Rotating trial order:** Each trial rotates the execution order of configurations to distribute "second run wins" effects from OS page cache warming.
 - **Warm-up runs:** Initial runs are discarded to eliminate cold-start bias.
@@ -228,13 +243,13 @@ These speedups represent pure free-threading gains with no executor confound.
 
 ```bash
 # Full 2×2 matrix (recommended for complete analysis)
-./my_solution_benchmark_gil.py data/large_input_v1.txt --all-modes --trials 16
+routing-cycle-detector-benchmark data/large_input_v1.txt --all-modes --trials 16
 
 # Threads-only comparison (isolates free-threading benefit)
-./my_solution_benchmark_gil.py data/large_input_v1.txt --trials 16 --executor threads
+routing-cycle-detector-benchmark data/large_input_v1.txt --trials 16 --executor threads
 
 # Processes-only comparison (baseline for multiprocessing)
-./my_solution_benchmark_gil.py data/large_input_v1.txt --trials 16 --executor processes
+routing-cycle-detector-benchmark data/large_input_v1.txt --trials 16 --executor processes
 ```
 
 | Option | Default | Description |
@@ -272,12 +287,12 @@ Running 16 trials (rotating order to reduce bias)...
 ===============================================================================================
 RESULTS (2×2 Matrix: Executor × GIL)
 ===============================================================================================
-Executor     GIL      Median(s)   Min(s)    Max(s)    Peak RSS(MiB)  Output              
+Executor     GIL      Median(s)   Min(s)    Max(s)    Peak RSS(MiB)  Output
 -----------------------------------------------------------------------------------------------
-threads      off      17.115      15.000    17.530    229.2          190211,190310,10    
-threads      on       28.570      26.510    29.110    230.3          190211,190310,10    
-processes    off      16.790      14.600    17.180    969.2          190211,190310,10    
-processes    on       15.280      14.680    17.350    968.8          190211,190310,10    
+threads      off      17.115      15.000    17.530    229.2          190211,190310,10
+threads      on       28.570      26.510    29.110    230.3          190211,190310,10
+processes    off      16.790      14.600    17.180    969.2          190211,190310,10
+processes    on       15.280      14.680    17.350    968.8          190211,190310,10
 -----------------------------------------------------------------------------------------------
 
 SPEEDUPS (GIL-on / GIL-off ratio for each executor):
@@ -318,12 +333,12 @@ Running 16 trials (rotating order to reduce bias)...
 ===============================================================================================
 RESULTS (2×2 Matrix: Executor × GIL)
 ===============================================================================================
-Executor     GIL      Median(s)   Min(s)    Max(s)    Peak RSS(MiB)  Output              
+Executor     GIL      Median(s)   Min(s)    Max(s)    Peak RSS(MiB)  Output
 -----------------------------------------------------------------------------------------------
-threads      off      11.505      11.200    13.750    377.7          699,190310,10       
-threads      on       66.810      66.480    69.050    298.3          699,190310,10       
-processes    off      9.160       9.020     11.460    1751.6         699,190310,10       
-processes    on       9.290       9.130     11.610    1751.0         699,190310,10       
+threads      off      11.505      11.200    13.750    377.7          699,190310,10
+threads      on       66.810      66.480    69.050    298.3          699,190310,10
+processes    off      9.160       9.020     11.460    1751.6         699,190310,10
+processes    on       9.290       9.130     11.610    1751.0         699,190310,10
 -----------------------------------------------------------------------------------------------
 
 SPEEDUPS (GIL-on / GIL-off ratio for each executor):
@@ -379,16 +394,14 @@ If you encounter file descriptor exhaustion:
   ```bash
   sudo apt install time
   ```
-- **psutil required for benchmarking:** The benchmark script needs `psutil` for process-tree memory measurement:
+- **psutil required for benchmarking:** The benchmark CLI needs `psutil` for process-tree memory measurement. Install with:
   ```bash
-  pip install psutil
-  # or with uv:
-  uv pip install psutil
+  uv pip install -e ".[benchmark]"
   ```
 
 ### Python Version
 
-This solution requires **Python 3.14+** for free-threading support. It will run on earlier versions but will use `ProcessPoolExecutor` (higher memory overhead).
+This solution requires **Python 3.11+**. Free-threading support requires **Python 3.14t**. On earlier versions, the tool will use `ProcessPoolExecutor` (higher memory overhead).
 
 ---
 
@@ -396,22 +409,36 @@ This solution requires **Python 3.14+** for free-threading support. It will run 
 
 ```
 routing-cycle-detector/
-├── my_solution.py                    # Main entry point (PEP 723 script)
-├── my_solution_benchmark_gil.py      # Benchmark script
-├── generate_synthetic_cycles.py      # Synthetic dataset generator
-├── solution.txt                      # Output from running on challenge data
-├── explanation.txt                   # Brief algorithm summary
 ├── src/
-│   ├── partition.py                  # Pass 1: Bucketing with LRU cache
-│   ├── graph.py                      # Pass 2: Cycle detection
-│   └── scheduler.py                  # Orchestration and parallelism
+│   └── routing_cycle_detector/
+│       ├── __init__.py           # Package exports (solve, main_solve)
+│       ├── __main__.py           # python -m routing_cycle_detector
+│       ├── cli.py                # CLI argument parsing
+│       ├── benchmark.py          # GIL benchmark (requires psutil)
+│       ├── graph.py              # Pass 2: Cycle detection
+│       ├── partition.py          # Pass 1: Bucketing with LRU cache
+│       └── scheduler.py          # Orchestration and parallelism
 ├── tests/
-│   ├── test_partition.py
-│   └── test_graph.py
+│   ├── test_graph.py
+│   └── test_partition.py
 ├── data/
-│   └── large_input_v1.txt            # Challenge dataset
-└── diagrams/
-    ├── End-to-End Pipeline.md
-    └── Sequence Diagram.md
+│   ├── large_input_v1.txt        # Challenge dataset
+│   └── generate_synthetic_cycles.py  # Synthetic dataset generator
+├── diagrams/
+│   ├── End-to-End Pipeline.md
+│   └── Sequence Diagram.md
+├── pyproject.toml
+└── README.md
 ```
+
+### Generating Synthetic Test Data
+
+```bash
+# Generate ~11M lines (similar to real dataset)
+python data/generate_synthetic_cycles.py --out data/synthetic.txt --groups 175000
+
+# Generate heavier CPU load (more cycles per group)
+python data/generate_synthetic_cycles.py --out data/synthetic_heavy.txt --groups 175000 --out-degree 3
+```
+
 ---
