@@ -4,7 +4,8 @@ import tempfile
 import zlib
 from pathlib import Path
 
-from routing_cycle_detector.partition import LRUFileCache, partition_to_buckets
+from routing_cycle_detector.partition import partition_to_buckets
+from routing_cycle_detector.partition.cache import LRUFileCache
 
 
 class TestPartitionToBuckets:

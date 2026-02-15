@@ -16,6 +16,7 @@ Note: This module requires the 'benchmark' optional dependency:
 """
 
 import argparse
+import contextlib
 import logging
 import os
 import re
@@ -86,10 +87,8 @@ def parse_timev_output(stderr: str) -> tuple[float | None, float | None]:
         r"Elapsed \(wall clock\) time \([^)]+\):\s*(\S+)", stderr
     )
     if elapsed_match:
-        try:
+        with contextlib.suppress(ValueError):
             seconds = parse_elapsed_to_seconds(elapsed_match.group(1))
-        except ValueError:
-            pass
 
     # Match RSS: "Maximum resident set size (kbytes): 123456"
     rss_match = re.search(
@@ -131,11 +130,9 @@ def measure_peak_rss_tree(
     while proc.poll() is None:
         total_rss = 0
 
-        try:
+        with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
             # Get root process RSS
             total_rss += root_proc.memory_info().rss
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
 
         try:
             # Get all descendant processes recursively
@@ -154,10 +151,8 @@ def measure_peak_rss_tree(
     # Final sample after process exits (catch any late peak)
     try:
         total_rss = 0
-        try:
+        with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
             total_rss += root_proc.memory_info().rss
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
 
         try:
             children = root_proc.children(recursive=True)

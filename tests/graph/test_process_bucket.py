@@ -3,7 +3,8 @@
 import tempfile
 from pathlib import Path
 
-from routing_cycle_detector.graph import _find_cycle_functional, _find_longest_cycle, process_bucket
+from routing_cycle_detector.graph import process_bucket
+from routing_cycle_detector.graph.cycle import find_cycle_functional, find_longest_cycle
 
 
 class TestProcessBucket:
@@ -137,52 +138,52 @@ class TestProcessBucket:
 
 
 class TestFindLongestCycle:
-    """Test cases for _find_longest_cycle function."""
+    """Test cases for find_longest_cycle function."""
 
     def test_empty_graph(self) -> None:
         """Test with empty adjacency."""
-        assert _find_longest_cycle({}, True) == 0
+        assert find_longest_cycle({}, True) == 0
 
     def test_single_node_self_loop(self) -> None:
         """Test self-loop returns 0 (not counted as meaningful cycle)."""
         adj = {b"A": {b"A"}}
         # Functional graph path
-        assert _find_longest_cycle(adj, True) == 0
+        assert find_longest_cycle(adj, True) == 0
 
     def test_two_node_cycle(self) -> None:
         """Test 2-node cycle."""
         adj = {b"A": {b"B"}, b"B": {b"A"}}
-        assert _find_longest_cycle(adj, True) == 2
+        assert find_longest_cycle(adj, True) == 2
 
     def test_triangle(self) -> None:
         """Test 3-node cycle."""
         adj = {b"A": {b"B"}, b"B": {b"C"}, b"C": {b"A"}}
-        assert _find_longest_cycle(adj, True) == 3
+        assert find_longest_cycle(adj, True) == 3
 
     def test_no_cycle_linear(self) -> None:
         """Test linear graph with no cycle."""
         adj = {b"A": {b"B"}, b"B": {b"C"}, b"C": {b"D"}}
-        assert _find_longest_cycle(adj, True) == 0
+        assert find_longest_cycle(adj, True) == 0
 
     def test_general_graph_with_branching(self) -> None:
         """Test general graph (not functional) with DFS path."""
         # A -> B, A -> C, B -> C, C -> A (multiple paths, cycle of 3)
         adj = {b"A": {b"B", b"C"}, b"B": {b"C"}, b"C": {b"A"}}
-        assert _find_longest_cycle(adj, False) == 3
+        assert find_longest_cycle(adj, False) == 3
 
 
 class TestFindCycleFunctional:
-    """Test cases for _find_cycle_functional (O(N) algorithm)."""
+    """Test cases for find_cycle_functional (O(N) algorithm)."""
 
     def test_simple_cycle(self) -> None:
         """Test simple functional graph cycle."""
         adj = {b"A": {b"B"}, b"B": {b"C"}, b"C": {b"A"}}
-        assert _find_cycle_functional(adj) == 3
+        assert find_cycle_functional(adj) == 3
 
     def test_rho_shaped_graph(self) -> None:
         """Test rho-shaped graph (tail leading to cycle)."""
         adj = {b"X": {b"A"}, b"A": {b"B"}, b"B": {b"C"}, b"C": {b"A"}}
-        assert _find_cycle_functional(adj) == 3
+        assert find_cycle_functional(adj) == 3
 
     def test_multiple_components(self) -> None:
         """Test graph with multiple disconnected components."""
@@ -193,10 +194,10 @@ class TestFindCycleFunctional:
             b"Y": {b"Z"},
             b"Z": {b"X"},  # 3-cycle
         }
-        result = _find_cycle_functional(adj)
+        result = find_cycle_functional(adj)
         assert result == 3
 
     def test_self_loop_not_counted(self) -> None:
         """Test that self-loops are not counted as meaningful cycles."""
         adj = {b"A": {b"A"}}
-        assert _find_cycle_functional(adj) == 0
+        assert find_cycle_functional(adj) == 0

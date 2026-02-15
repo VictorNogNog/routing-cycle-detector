@@ -1,4 +1,4 @@
-"""Routing Cycle Detector - Find longest cycles in routing claims data."""
+"""Solver domain package."""
 
 from routing_cycle_detector.solver.solve import main_solve, solve
 
