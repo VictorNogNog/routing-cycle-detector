@@ -6,11 +6,13 @@
             "type": "debugpy",
             "request": "launch",
             "module": "routing_cycle_detector",
+            "python": "${workspaceFolder}/.venv/bin/python",
             "args": ["data/small_input_v1.txt", "--log-level", "DEBUG"],
             "console": "integratedTerminal",
             "justMyCode": false,
             "subProcess": true,
             "env": {
+                "PYTHONPATH": "${workspaceFolder}/src",
                 "RC_EXECUTOR": "serial"
             }
         },
@@ -19,11 +21,13 @@
             "type": "debugpy",
             "request": "launch",
             "module": "routing_cycle_detector",
+            "python": "${workspaceFolder}/.venv/bin/python",
             "args": ["data/large_input_v1.txt", "--log-level", "DEBUG"],
             "console": "integratedTerminal",
             "justMyCode": false,
             "subProcess": true,
             "env": {
+                "PYTHONPATH": "${workspaceFolder}/src",
                 "RC_EXECUTOR": "serial"
             }
         },
@@ -32,69 +36,97 @@
             "type": "debugpy",
             "request": "launch",
             "module": "routing_cycle_detector",
+            "python": "${workspaceFolder}/.venv/bin/python",
             "args": ["data/large_input_v1.txt", "--log-level", "DEBUG"],
             "console": "integratedTerminal",
             "justMyCode": false,
-            "subProcess": true
+            "subProcess": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src"
+            }
         },
         {
             "name": "Solution: Default (INFO)",
             "type": "debugpy",
             "request": "launch",
             "module": "routing_cycle_detector",
+            "python": "${workspaceFolder}/.venv/bin/python",
             "args": ["data/large_input_v1.txt"],
             "console": "integratedTerminal",
             "justMyCode": false,
-            "subProcess": true
+            "subProcess": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src"
+            }
         },
         {
             "name": "Solution: Synthetic data",
             "type": "debugpy",
             "request": "launch",
             "module": "routing_cycle_detector",
+            "python": "${workspaceFolder}/.venv/bin/python",
             "args": ["data/synth_fast_3p5m.txt", "--log-level", "DEBUG"],
             "console": "integratedTerminal",
             "justMyCode": false,
-            "subProcess": true
+            "subProcess": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src"
+            }
         },
         {
             "name": "Benchmark: Quick test",
             "type": "debugpy",
             "request": "launch",
             "module": "routing_cycle_detector.benchmark",
+            "python": "${workspaceFolder}/.venv/bin/python",
             "args": ["data/synth_fast_3p5m.txt", "--trials", "2"],
             "console": "integratedTerminal",
             "justMyCode": false,
-            "subProcess": true
+            "subProcess": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src"
+            }
         },
         {
             "name": "Benchmark: All modes",
             "type": "debugpy",
             "request": "launch",
             "module": "routing_cycle_detector.benchmark",
-            "args": ["data/synth_fast_3p5m.txt", "--all-modes", "--trials", "2"],
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": ["data/large_input_v1.txt", "--all-modes", "--trials", "2"],
             "console": "integratedTerminal",
             "justMyCode": false,
-            "subProcess": true
+            "subProcess": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src"
+            }
         },
         {
             "name": "Generate synthetic data",
             "type": "debugpy",
             "request": "launch",
+            "python": "${workspaceFolder}/.venv/bin/python",
             "program": "${workspaceFolder}/data/generate_synthetic_cycles.py",
             "args": ["--out", "data/test_synthetic.txt", "--groups", "1000", "--log-level", "INFO"],
             "console": "integratedTerminal",
             "justMyCode": false,
-            "subProcess": true
+            "subProcess": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src"
+            }
         },
         {
             "name": "Current file",
             "type": "debugpy",
             "request": "launch",
+            "python": "${workspaceFolder}/.venv/bin/python",
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "subProcess": true
+            "subProcess": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src"
+            }
         }
     ]
 }

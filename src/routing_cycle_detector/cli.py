@@ -4,7 +4,7 @@ import argparse
 import logging
 import sys
 
-from routing_cycle_detector.scheduler import main_solve
+from routing_cycle_detector.solver.solve import main_solve
 
 
 def configure_logging(level: int = logging.INFO) -> None:
