@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from routing_cycle_detector.graph import process_bucket
+from routing_cycle_detector.graph.types import BucketResult
 from routing_cycle_detector.partition import partition_to_buckets
 from routing_cycle_detector.solver.execution import (
     RC_EXECUTOR_ENV,
@@ -87,17 +88,19 @@ def solve(
         # Convert Path objects to strings for pickling (ProcessPoolExecutor).
         bucket_path_strs = [str(p) for p in bucket_paths]
 
-        best_result: tuple[bytes, bytes, int] | None = None
+        best_result: BucketResult | None = None
 
         def process_results(results) -> None:
             """Process results iterator and track best result."""
             nonlocal best_result
             for result in results:
-                if result is not None and (best_result is None or result[2] > best_result[2]):
+                if result is not None and (
+                    best_result is None or result.cycle_length > best_result.cycle_length
+                ):
                     best_result = result
-                    claim_id = result[0].decode("utf-8")
-                    status = result[1].decode("utf-8")
-                    logger.debug("New best: %s,%s,%d", claim_id, status, result[2])
+                    claim_id = result.claim_id.decode("utf-8")
+                    status = result.status_code.decode("utf-8")
+                    logger.debug("New best: %s,%s,%d", claim_id, status, result.cycle_length)
 
         if executor_class is None:
             results = (process_bucket(path) for path in bucket_path_strs)
@@ -133,9 +136,9 @@ def solve(
             logger.info("Result: No cycles found (total %.2fs)", total_time)
             return None
 
-        claim_id = best_result[0].decode("utf-8")
-        status = best_result[1].decode("utf-8")
-        cycle_len = best_result[2]
+        claim_id = best_result.claim_id.decode("utf-8")
+        status = best_result.status_code.decode("utf-8")
+        cycle_len = best_result.cycle_length
         logger.info("Result: cycle length %d (total %.2fs)", cycle_len, total_time)
         return (claim_id, status, cycle_len)
 
