@@ -22,7 +22,7 @@ def process_bucket(bucket_path: str) -> BucketResult | None:
     for key, adj in edges.items():
         is_functional = max_out_degree[key] <= 1
         cycle_len = find_longest_cycle(adj, is_functional)
-        if cycle_len > 0 and (best_result is None or cycle_len > best_result[2]):
-            best_result = (key[0], key[1], cycle_len)
+        if cycle_len > 0 and (best_result is None or cycle_len > best_result.cycle_length):
+            best_result = BucketResult(key[0], key[1], cycle_len)
 
     return best_result

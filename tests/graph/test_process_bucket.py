@@ -23,9 +23,9 @@ class TestProcessBucket:
         try:
             result = process_bucket(bucket_path)
             assert result is not None
-            assert result[0] == b"CLM001"
-            assert result[1] == b"200"
-            assert result[2] == 3
+            assert result.claim_id == b"CLM001"
+            assert result.status_code == b"200"
+            assert result.cycle_length == 3
         finally:
             Path(bucket_path).unlink()
 
@@ -41,7 +41,7 @@ class TestProcessBucket:
         try:
             result = process_bucket(bucket_path)
             assert result is not None
-            assert result[2] == 2
+            assert result.cycle_length == 2
         finally:
             Path(bucket_path).unlink()
 
@@ -80,8 +80,8 @@ class TestProcessBucket:
         try:
             result = process_bucket(bucket_path)
             assert result is not None
-            assert result[0] == b"CLM002"
-            assert result[2] == 4
+            assert result.claim_id == b"CLM002"
+            assert result.cycle_length == 4
         finally:
             Path(bucket_path).unlink()
 
@@ -132,7 +132,7 @@ class TestProcessBucket:
         try:
             result = process_bucket(bucket_path)
             assert result is not None
-            assert result[2] == 2  # 2-node cycle
+            assert result.cycle_length == 2  # 2-node cycle
         finally:
             Path(bucket_path).unlink()
 
